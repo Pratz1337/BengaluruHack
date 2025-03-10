@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Financial Voice Assistant</title>
+</head>
+<body>
+    <button id="recordButton">Start Recording</button>
+    <div id="status"></div>
+    <div id="response"></div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        const socket = io('http://localhost:8000');
+        let mediaRecorder;
+        let audioChunks = [];
+        
+        // Socket connection handlers
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            document.getElementById('status').textContent = 'Connected';
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            document.getElementById('status').textContent = 'Disconnected';
+        });
+
+        socket.on('response', (response) => {
+            console.log('Response:', response);
+            document.getElementById('response').innerHTML = `
+                <p><strong>Text:</strong> ${response.text}</p>
+                ${response.audio ? '<p>Playing audio response...</p>' : ''}
+            `;
+
+            if(response.audio) {
+                const audio = new Audio(`data:audio/wav;base64,${response.audio}`);
+                audio.play();
+            }
+        });
+
+        socket.on('error', (error) => {
+            console.error('Error:', error);
+            document.getElementById('response').innerHTML = `
+                <p style="color: red;">Error: ${error.message}</p>
+            `;
+        });
+
+        // Audio recording setup
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    audioChunks = [];
+                    
+                    // Convert to base64
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64Audio = reader.result.split(',')[1];
+                        socket.emit('audio_message', {
+                            audio: base64Audio,
+                            language: 'en-IN' // or detect language from UI
+                        });
+                    };
+                    reader.readAsDataURL(audioBlob);
+                };
+
+                mediaRecorder.start();
+                document.getElementById('recordButton').textContent = 'Stop Recording';
+            } catch (err) {
+                console.error('Error accessing microphone:', err);
+            }
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+            document.getElementById('recordButton').textContent = 'Start Recording';
+        }
+
+        // UI Controls
+        document.getElementById('recordButton').addEventListener('click', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+    </script>
+</body>
+</html>
