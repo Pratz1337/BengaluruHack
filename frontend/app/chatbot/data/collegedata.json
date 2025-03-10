@@ -1,0 +1,267 @@
+{
+  "colleges": [
+    {
+      "name": "Swami Keshvanand Institute of Technology (SKIT)",
+      "courses": [
+        {
+          "name": "Computer Science and Engineering",
+          "cutoff": "4500-5000",
+          "fees": "₹3,70,000",
+          "scholarship": "₹50,000 per year through Pragati Scholarship (Girls) or Saksham Scholarship (Specially Abled)",
+          "avg_salary": "₹4.85 LPA",
+          "placement_percentage": "90%"
+        },
+        {
+          "name": "Mechanical Engineering",
+          "cutoff": "6000-7000",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.2 LPA",
+          "placement_percentage": "85%"
+        },
+        {
+          "name": "Electrical Engineering",
+          "cutoff": "5500-6000",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.1 LPA",
+          "placement_percentage": "84%"
+        },
+        {
+          "name": "Civil Engineering",
+          "cutoff": "6500-7500",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.0 LPA",
+          "placement_percentage": "83%"
+        },
+        {
+          "name": "Artificial Intelligence",
+          "cutoff": "4000-4500",
+          "fees": "₹4,00,000",
+          "scholarship": "₹50,000 per year through Saksham Scholarship",
+          "avg_salary": "₹5.2 LPA",
+          "placement_percentage": "92%"
+        },
+        {
+          "name": "Data Science",
+          "cutoff": "5500-6000",
+          "fees": "₹4,50,000",
+          "scholarship": "₹30,000 for the first year through Merit Scholarship",
+          "avg_salary": "₹5.0 LPA",
+          "placement_percentage": "88%"
+        },
+        {
+          "name": "Biomedical Engineering",
+          "cutoff": "6000-6500",
+          "fees": "₹4,00,000",
+          "scholarship": "₹10,000 per year through Central Sector Scheme",
+          "avg_salary": "₹4.5 LPA",
+          "placement_percentage": "80%"
+        },
+        {
+          "name": "Aerospace Engineering",
+          "cutoff": "5000-5500",
+          "fees": "₹6,00,000",
+          "scholarship": "₹25,000 per year through Prime Minister's Scholarship",
+          "avg_salary": "₹6.5 LPA",
+          "placement_percentage": "85%"
+        },
+        {
+          "name": "Chemical Engineering",
+          "cutoff": "5500-6000",
+          "fees": "₹5,00,000",
+          "scholarship": "₹20,000 per year through Merit Scholarship",
+          "avg_salary": "₹5.5 LPA",
+          "placement_percentage": "83%"
+        },
+        {
+          "name": "Electronics and Communication Engineering",
+          "cutoff": "5000-6000",
+          "fees": "₹3,60,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.5 LPA",
+          "placement_percentage": "87%"
+        },
+        {
+          "name": "Information Technology",
+          "cutoff": "4500-5500",
+          "fees": "₹3,70,000",
+          "scholarship": "₹50,000 per year through Pragati Scholarship (Girls)",
+          "avg_salary": "₹4.8 LPA",
+          "placement_percentage": "89%"
+        }
+      ]
+    },
+    {
+      "name": "Jagannath University Jaipur",
+      "courses": [
+        {
+          "name": "Computer Science and Engineering",
+          "cutoff": "1500-2000",
+          "fees": "₹6,00,000",
+          "scholarship": "₹30,000 per year through Pragati Scholarship (Girls) or Saksham Scholarship (Specially Abled)",
+          "avg_salary": "₹7.64 LPA",
+          "placement_percentage": "96%"
+        },
+        {
+          "name": "Mechanical Engineering",
+          "cutoff": "6000-7000",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.2 LPA",
+          "placement_percentage": "85%"
+        },
+        {
+          "name": "Electrical Engineering",
+          "cutoff": "5500-6000",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.1 LPA",
+          "placement_percentage": "84%"
+        },
+        {
+          "name": "Civil Engineering",
+          "cutoff": "6500-7500",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.0 LPA",
+          "placement_percentage": "83%"
+        },
+        {
+          "name": "Artificial Intelligence",
+          "cutoff": "4000-4500",
+          "fees": "₹4,00,000",
+          "scholarship": "₹50,000 per year through Saksham Scholarship",
+          "avg_salary": "₹5.2 LPA",
+          "placement_percentage": "92%"
+        },
+        {
+          "name": "Data Science",
+          "cutoff": "5500-6000",
+          "fees": "₹4,50,000",
+          "scholarship": "₹30,000 for the first year through Merit Scholarship",
+          "avg_salary": "₹5.0 LPA",
+          "placement_percentage": "88%"
+        },
+        {
+          "name": "Biomedical Engineering",
+          "cutoff": "6000-6500",
+          "fees": "₹4,00,000",
+          "scholarship": "₹10,000 per year through Central Sector Scheme",
+          "avg_salary": "₹4.5 LPA",
+          "placement_percentage": "80%"
+        },
+        {
+          "name": "Aerospace Engineering",
+          "cutoff": "5000-5500",
+          "fees": "₹6,00,000",
+          "scholarship": "₹25,000 per year through Prime Minister's Scholarship",
+          "avg_salary": "₹6.5 LPA",
+          "placement_percentage": "85%"
+        },
+        {
+          "name": "Chemical Engineering",
+          "cutoff": "5500-6000",
+          "fees": "₹5,00,000",
+          "scholarship": "₹20,000 per year through Merit Scholarship",
+          "avg_salary": "₹5.5 LPA",
+          "placement_percentage": "83%"
+        },
+        {
+          "name": "Electronics and Communication Engineering",
+          "cutoff": "5000-6000",
+          "fees": "₹3,60,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.5 LPA",
+          "placement_percentage": "87%"
+        },
+        {
+          "name": "Information Technology",
+          "cutoff": "4500-5500",
+          "fees": "₹3,70,000",
+          "scholarship": "₹50,000 per year through Pragati Scholarship (Girls)",
+          "avg_salary": "₹4.8 LPA",
+          "placement_percentage": "89%"
+        }
+      ]
+    },
+    {
+      "name": "Jaipur National University",
+      "courses": [
+        {
+          "name": "Computer Science and Engineering",
+          "cutoff": "4500-5000",
+          "fees": "₹3,70,000",
+          "scholarship": "₹50,000 per year through Pragati Scholarship (Girls) or Saksham Scholarship (Specially Abled)",
+          "avg_salary": "₹4.85 LPA",
+          "placement_percentage": "90%"
+        },
+        {
+          "name": "Mechanical Engineering",
+          "cutoff": "6000-7000",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.2 LPA",
+          "placement_percentage": "85%"
+        },
+        {
+          "name": "Electrical Engineering",
+          "cutoff": "5500-6000",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.1 LPA",
+          "placement_percentage": "84%"
+        },
+        {
+          "name": "Civil Engineering",
+          "cutoff": "6500-7500",
+          "fees": "₹3,50,000",
+          "scholarship": "₹30,000 per year through Merit-cum-Means Scholarship",
+          "avg_salary": "₹4.0 LPA",
+          "placement_percentage": "83%"
+        },
+        {
+          "name": "Artificial Intelligence",
+          "cutoff": "4000-4500",
+          "fees": "₹4,00,000",
+          "scholarship": "₹50,000 per year through Saksham Scholarship",
+          "avg_salary": "₹5.2 LPA",
+          "placement_percentage": "92%"
+        },
+        {
+          "name": "Data Science",
+          "cutoff": "5500-6000",
+          "fees": "₹4,50,000",
+          "scholarship": "₹30,000 for the first year through Merit Scholarship",
+          "avg_salary": "₹5.0 LPA",
+          "placement_percentage": "88%"
+        },
+        {
+          "name": "Biomedical Engineering",
+          "cutoff": "6000-6500",
+          "fees": "₹4,00,000",
+          "scholarship": "₹10,000 per year through Central Sector Scheme",
+          "avg_salary": "₹4.5 LPA",
+          "placement_percentage": "80%"
+        },
+        {
+          "name": "Aerospace Engineering",
+          "cutoff": "5000-5500",
+          "fees": "₹6,00,000",
+          "scholarship": "₹25,000 per year through Prime Minister's Scholarship",
+          "avg_salary": "₹6.5 LPA",
+          "placement_percentage": "85%"
+        },
+        {
+          "name": "Chemical Engineering",
+          "cutoff": "5500-6000",
+          "fees": "₹5,00,000",
+          "scholarship": "₹20,000 per year through Merit Scholarship",
+          "avg_salary": "₹5.5 LPA",
+          "placement_percentage": "83%"
+        }
+      ]
+    }
+  ]
+}
