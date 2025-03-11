@@ -2,15 +2,10 @@ import json
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 from langchain_groq import ChatGroq
-from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from pymongo import MongoClient
 from langchain_mongodb.vectorstores import MongoDBAtlasVectorSearch
 from langchain_ollama import OllamaEmbeddings
-from langchain.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from tt import search_pdf_chunks
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Initialize MongoDB client and collections
 client = MongoClient('mongodb+srv://pranay:sih2024@cluster0.kx5kz.mongodb.net')
@@ -33,9 +28,7 @@ extractionLLM = ChatGroq(
     api_key="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"
 )
 
-
 memory = MemorySaver()
-
 
 def extract_college_info(content,msg,vecRes,sources):
     prompt = f"""
@@ -209,3 +202,77 @@ def ChatModel(id, msg, messages):
     similarities = [item.get("similarity", 0) for item in res]
     extraction["similarity"] = similarities
     return {"res": {"msg": extraction["result"], "toolCall": {}}, "info": extraction}
+
+# Add this function if it's not defined elsewhere in your codebase
+def search_pdf_chunks(query, top_k=2):
+    # Implement vector search functionality or use a placeholder
+    # This is a placeholder implementation
+    try:
+        # Attempt to use existing vector search if available
+        # You may need to adjust this based on your actual implementation
+        embeddings = OllamaEmbeddings(model="nomic-embed-text")
+        vector_store = MongoDBAtlasVectorSearch.from_connection_string(
+            connection_string="mongodb+srv://pranay:sih2024@cluster0.kx5kz.mongodb.net",
+            namespace="SIH.vectors",
+            embedding=embeddings,
+            index_name="vector_index"
+        )
+        results = vector_store.similarity_search_with_score(query, k=top_k)
+        return [{"content": doc.page_content, "source": doc.metadata.get("source", "unknown"), "similarity": score} 
+                for doc, score in results]
+    except Exception as e:
+        print(f"Vector search error: {e}")
+        # Return placeholder results if search fails
+        return [{"content": "No content found", "source": "None", "similarity": 0}]
+
+# Terminal interface for the chatbot
+def run_terminal_chat():
+    print("\n" + "="*50)
+    print("EduMitra - College Information Chatbot")
+    print("Type 'exit' or 'quit' to end the conversation")
+    print("="*50 + "\n")
+    
+    session_id = "terminal-" + str(hash(str(time.time())))
+    conversation_history = []
+    
+    while True:
+        # Get user input
+        user_input = input("\n👤 You: ")
+        
+        # Check if user wants to exit
+        if user_input.lower() in ['exit', 'quit', 'bye']:
+            print("\n🤖 EduMitra: Thank you for using our service. Goodbye!")
+            break
+            
+        # Add user message to history
+        conversation_history.append(f"User: {user_input}")
+        conversation_text = "\n".join(conversation_history)
+        
+        # Process with the chatbot
+        try:
+            result = ChatModel(session_id, user_input, conversation_text)
+            response = result["res"]["msg"]
+            
+            # Handle empty responses
+            if not response or response.strip() == "":
+                response = "I'm sorry, I couldn't generate a proper response. Please try rephrasing your question."
+            
+            # Add bot response to history
+            conversation_history.append(f"EduMitra: {response}")
+            
+            # Print bot response
+            print(f"\n🤖 EduMitra: {response}")
+            
+        except Exception as e:
+            print(f"\n🤖 EduMitra: Sorry, I encountered an error: {str(e)}")
+            print("Please try again or restart the application.")
+
+if __name__ == "__main__":
+    import time
+    
+    try:
+        run_terminal_chat()
+    except KeyboardInterrupt:
+        print("\n\nChat session terminated by user. Goodbye!")
+    except Exception as e:
+        print(f"\nAn unexpected error occurred: {str(e)}")
