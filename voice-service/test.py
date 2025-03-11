@@ -72,10 +72,10 @@ def handle_audio_message(data):
     try:
         # Log received data (just the length to avoid huge logs)
         logger.info(f"Received audio data length: {len(data.get('audio', ''))}")
-        logger.info(f"Language: {data.get('language', 'en-IN')}")
+        logger.info(f"Language: {data.get('language', 'te-IN')}")
         
         # Convert audio to text
-        text = stt_gladia(data['audio'], data.get('language', 'en-IN'))
+        text = stt_gladia(data['audio'], data.get('language', 'te-IN'))
         if not text:
             raise ValueError("Failed to convert audio to text")
         
@@ -84,7 +84,7 @@ def handle_audio_message(data):
         response_text = result["output"]
         
         # Generate audio response
-        audio_data = generate_audio(response_text, data.get('language', 'en-IN'))
+        audio_data = generate_audio(response_text, data.get('language', 'hi-IN'))
         
         emit('response', {
             'text': response_text,
@@ -117,7 +117,7 @@ def stt_gladia(audio_base64: str, language: str) -> Optional[str]:
         # Prepare payload and files
         payload = {
             'model': 'saarika:v2',  # Using default model from example
-            'language_code': 'hi-IN',
+            'language_code': 'te-IN',
             'with_timesteps': 'false'
         }
         
@@ -144,7 +144,7 @@ def stt_gladia(audio_base64: str, language: str) -> Optional[str]:
             logger.error(f"Response status code: {e.response.status_code}")
         return None
 
-def generate_audio(text: str, lang: str = "en-IN") -> Optional[str]:
+def generate_audio(text: str,language:str) -> Optional[str]:
     """Generate audio using Sarvam AI"""
     url = "https://api.sarvam.ai/text-to-speech"
     headers = {
@@ -154,7 +154,7 @@ def generate_audio(text: str, lang: str = "en-IN") -> Optional[str]:
     
     payload = {
         "inputs": [text[:500]],  # Truncate to 500 chars
-        "target_language_code": lang,
+        "target_language_code": 'te-IN',
         "speaker": "meera"
     }
     
