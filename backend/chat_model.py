@@ -1,278 +1,204 @@
-import json
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
+import os
 from langchain_groq import ChatGroq
-from langchain_core.tools import tool
-from pymongo import MongoClient
-from langchain_mongodb.vectorstores import MongoDBAtlasVectorSearch
-from langchain_ollama import OllamaEmbeddings
+from langchain.prompts import ChatPromptTemplate
+from langchain.output_parsers import StructuredOutputParser, ResponseSchema
+from langchain.memory import ConversationBufferMemory
+from langchain.agents import initialize_agent, Tool
+from langchain.agents import AgentType
 
-# Initialize MongoDB client and collections
-client = MongoClient('mongodb+srv://pranay:sih2024@cluster0.kx5kz.mongodb.net')
-db = client['SIH']
-general_info_collection = db['common']
-llm = ChatGroq(
-    model="llama-3.2-90b-vision-preview",
-    temperature=0.4,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
-    api_key="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"
-)
-extractionLLM = ChatGroq(
-    model="llama-3.2-90b-vision-preview",
-    temperature=0,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
-    api_key="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"
-)
+# Load API Key
+GROQ_API_KEY = "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"
 
-memory = MemorySaver()
+# Initialize LLM
+llm = ChatGroq(model="llama-3.2-90b-vision-preview", temperature=0.4, api_key=GROQ_API_KEY)
 
-def extract_college_info(content,msg,vecRes,sources):
-    prompt = f"""
-    You are an AI-powered Student Assistance Chatbot-"EduMitra" for the Department of Technical Education, Government of Rajasthan. Your primary role is to provide accurate and helpful information about engineering and polytechnic institutes in Rajasthan.
-ACCESSS THE COLLEGES INFO THROUGH THE @TOOLS AND USE THE COLLEGE NAME TO FETCH THE DATA FROM THE DATABASE. FETCH DATA FROM DATABASE ONLY ONLY ONLY.ACCESSS THE COLLEGES INFO THROUGH THE @TOOLS AND USE THE COLLEGE NAME TO FETCH THE DATA FROM THE DATABASE. FETCH DATA FROM DATABASE ONLY ONLY ONLY
-IMPORTANT NOTES---> DONT TAKE RANDOM INFORMATION ABOUT ANY COLLEGE FROM INTERNET ONLY USE DATABSE USING TOOLCALL. IF U DONT HAVE INFORMATION OF ANY THING ABOUT COLLEGE THEN DONT ANSWER JUST SAY DONT KNOW.
-ALSO DONT GIVE ANY INFORMATION ABOUT ANY COLLEGE WHICH IS NOT IN THE DATABASE. IF USER ASKS ABOUT ANY COLLEGE WHICH IS NOT IN THE DATABASE, JUST SAY YOU DONT HAVE ANY INFORMATION
-IF THE USER ASKS ABOUT ALL THE POLYTECHNIC COLLEGES AVAILABLE FETCH THE DATABASE AND FROM THE TOOL CALL OF DATABSE, SEE THE CATEGORY OF THE COLLEGES AVAILABLE IN DATABSE, AND PRINT THE POLYTECHNIC COLLEGES. 
-IF THE USERASKS ABOUT SOME MEDICAL OR ARTS OR ANY OTHER MISCLENEOUS COLLEGES, JUST SAY YOU DONT HAVE ANY INFORMATION.
-IN THE BEGINING INFORM THE USERS ABOUT THE COLLEGES AVAILABLE IN THE DATABASE. BEFORE USING ANY TOOL REMOVE ANY ABBRIVATIONS FROM THE NAME OF THE COLLEGE BEFORE CALLING THE TOOL
-IF SOMEONE ASK ANY IRRELEVANT QUESTION, JUST SAY YOU DONT HAVE ANY INFORMATION. ONLY TALK ABOUT COLLEGES IN RAJASTHAN AND ALL
-Key Points:
-1. Language: You can understand queries in English or Hindi, but always respond in the language chosen by the user at the start of the conversation.
-2. Scope: You only provide information about engineering and polytechnic colleges under the Department of Technical Education, Government of Rajasthan.
-3. Information Coverage: You can answer questions about:
-   - Admission processes all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - Eligibility criteria all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - College-specific information all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - Fee structures all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - Curricula all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - Scholarships all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - Hostel facilities all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - Previous year's college and branch-specific allotments all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
-   - Placement opportunities all with respective to the specific college chosen by the User before, dont try to give information of some other college , if you dont know just avoid answering and say you dont have accurate information.
+# Define Memory for Conversation History
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-4. Data Source:FETCH USING THE TOOL FECTH DATABASE. YOU HAVE ALL THE INFORMATION AVAILABLE TO YOU, USE THAT WHEN THE USER ASKS A RELATED QUESTION
-5. User Experience: Be polite, patient, and thorough in your responses. Use markdown, numbering, and bolding where appropriate to present information clearly.
-6. Complex Queries: If a query is too complex or outside your knowledge base, politely suggest contacting the specific college or department directly.
-7. Data Privacy: Do not share or ask for personal information.
-8. Continuous Availability: Remind users that you're available 24/7 for their queries
-9. College Selection: When a user asks about colleges or needs to select a specific college, use the check_college tool to fetch the list of colleges. Present this list to the user as a series of options they can choose from.
-10. College Cut-off: When a user asks about the previous year's college and branch-specific allotments, use the check_cutoff tool to fetch the list of cutoff of that particular college selected by user. Give the result to the user in point form instead of table
-11. College Fees: When a user asks about the fee structure of a college, use the check_fees tool to fetch the fee structure of that particular college selected by user.
-12. The user might use abbrivations for the college, match these only with the college names in the database available through tool call and answer the query. If there is ambiguity confirm it with the user. The abrivation might be in lowercase, convert to upper and handle it
-13. The first time when you mention a college's name then mention it's official website address along with it. ONLY THE FIRST TIME
-14. When a lot of data is available for the same question then ask follow up questions from the user based on the information you have from tools to pin point the exact information the user is asking for
-15. For complex queries before saying you don't have the information try going back and looking at your data available and try making an answer using that 
-16. If you don't have the information about something specific tell the user what related information you have before apologising for not having the information
-17. For anything related to admission first tell the user about the enterance exams using the check_exams tool. Without exam no student can get admission
-ALL THE DATA YOU HAVE IS OFFICAL AND FROM THE COLLEGE ITSELF, DON'T KEEP WARNING THE USER THAT IT MIGHT BE INACCURATE
-Start the conversation by introducing yourself and asking how you can help with college information today. Always try to provide accurate, helpful, and efficient assistance to reduce the workload on department staff and enhance the user experience.
-ALSO INITIALLY IRRESPECTIVE TO WHAT THE USER SAYS, GIVE HIM INFORMATION ON THE COLLEGES AVAILABLE BECAUSE USER WILL NOT KNOW THE ONES AVAILABLE
-PLEASE USE MARKDOWN WHERE NECESSARY TO MAKE THE TEXT LOOK AS FORMATTED AND STRUCTURED AS POSSIBLE. Try breaking up larger paragraphs into smaller ones or points
-TRY TO KEEP YOUR REPLIES SHORT AND TO THE POINT AS POSSIBLE
-NOTE- IF YOU DONT HAVE ANY COLLEGES IN DATABASE, DONT ANSWER ANYTHING, JUST SAY YOU DONT HAVE ANY INFORMATION. 
-    Extract the college inquiry information from the following conversation:
-    {content}
-    Last message from the user: {msg}
-    Result for vector search: {vecRes}
-    source file names for vector data: {sources}
+# =============================== #
+# 🔹 TOOL 1: LOAN ELIGIBILITY CHECK
+# =============================== #
+loan_eligibility_schema = [
+    ResponseSchema(name="loan_type", description="Type of loan being considered (e.g., home loan, car loan)"),
+    ResponseSchema(name="income_requirement", description="Minimum income required for this loan"),
+    ResponseSchema(name="credit_score", description="Minimum credit score needed"),
+    ResponseSchema(name="employment_status", description="Required employment type (e.g., salaried, self-employed)"),
+    ResponseSchema(name="eligibility_result", description="Final eligibility decision"),
+]
 
-    IMPORTANT: Always return a COMPLETE, VALID JSON with these exact keys:
-    {{
-        "result:"",
-        "name": "",
-        "course": "",
-        "fees": "",
-        "scholarships": "",
-        "specific_details": "",
-        "options": [],
-        "dropdown_items": [],
-        "link": "",
-        "source": "",
-    }}
+loan_eligibility_parser = StructuredOutputParser.from_response_schemas(loan_eligibility_schema)
 
-    Extraction Instructions:
-    0.RESULT:(USE MARKDOWN AND KEEP IT ALL STRUCTURED AND PRETTY FOR HUMAN READABILITY) IT IS THE VECTOR SEARCH RESULT, IF YOU HAVE ANY INFORMATION RELATED TO THE QUERY, MENTION IT HERE, USE THE ONLY VECTOR DATA AND THE QUERY TO FORMULATE THE RESPONSE IF ITS A GENERAL QUESTION ABOUT COLLEGES OR GREETINGS REPLY ACCORDINGLY BUT DONT USE ANY EXTERNAL DATA OUTSIDE.IMPORTANT NOTES---> DONT TAKE RANDOM INFORMATION ABOUT ANY COLLEGE FROM INTERNET ONLY USE DATABSE USING TOOLCALL. IF U DONT HAVE INFORMATION OF ANY THING ABOUT COLLEGE THEN GIVE A GENERAL ANSWER IF U HAVE INFORMATION ABOUT IT  MENTION AFTER THE ANSWER IN BOLD THAT ITS NOT FROM DATABASE AND RESPONSE CAN BE INACCURATE. . IF USER ASK FOR ANY RECOMMENDATIONS RELATED TO COLLEGES AND EDUCATION ANSWER GENERICALLY BUT MENTION AFTER THE ANSWER IN BOLD THAT ITS NOT FROM DATABASE AND RESPONSE CAN BE INACCURATE.
+loan_eligibility_prompt = ChatPromptTemplate.from_template("""
+You are a Loan Advisor AI. Help the user determine loan eligibility based on their financial details.
 
-    1. name: The exact name of the college being discussed
-    2. course: Specific course mentioned
-    3. fees: Specific fee information for the course
-    4. scholarships: Scholarship details
-    5. specific_details: Any unique or specific inquiries
-    6. options: Potential follow-up questions. just tell the "SUBJECT" of question , dont formulate whole follow-up just main subject.
-    7. dropdown_items: List of colleges or options mentioned.dont mention it again and again only when college ask for which colleges are there.
-    8. link: Official college website if mentioned
-    9. source: Sources are the file names of the vectors passed to the function, after selecting a vector select it's corrosponding source name from the list (the source name and vectors are in same order)
-    """
-    
-    # Get LLM response
-    response = extractionLLM.invoke(prompt)
-    print("Raw Response:", response.content)
+User Details:  
+{user_info}
 
-    # Comprehensive JSON parsing
+Response Format:  
+{format_instructions}
+""")
+
+
+def check_loan_eligibility(user_info: str) -> dict:
+    """Determine the user's loan eligibility based on financial details."""
+    prompt_with_instructions = loan_eligibility_prompt.format(
+        user_info=user_info,
+        format_instructions=loan_eligibility_parser.get_format_instructions()
+    )
+    response = llm.invoke(prompt_with_instructions)
+
     try:
-        # Try direct JSON parsing first
-        extracted_info = json.loads(response.content)
-    except json.JSONDecodeError:
-        try:
-            # Try to extract JSON between first { and last }
-            json_start = response.content.index('{')
-            json_end = response.content.rindex('}') + 1
-            json_str = response.content[json_start:json_end]
-            extracted_info = json.loads(json_str)
-        except (ValueError, json.JSONDecodeError):
-            # If all parsing fails, create a minimal valid JSON
-            extracted_info = {
-                "result":"",
-                "name": "",
-                "course": "",
-                "fees": "",
-                "scholarships": "",
-                "specific_details": "",
-                "options": [],
-                "dropdown_items": [],
-                "link": "",
-                "source": ""
-            }
-    
-    # Ensure all keys exist and have appropriate types
-    keys_to_ensure = [
-        "name", "course", "fees", 
-        "scholarships", "specific_details", 
-        "options", "dropdown_items", "link", "source"
-    ]
-    for key in keys_to_ensure:
-        if key not in extracted_info:
-            extracted_info[key] = "" if key not in ["options", "dropdown_items"] else []
-    
-    # Validate and clean extracted information
-    for key in ["options", "dropdown_items"]:
-        if not isinstance(extracted_info[key], list):
-            extracted_info[key] = []
-    
-    print("Extracted Info:", extracted_info)
-    return extracted_info
-
-def print_stream(graph, inputs, config):
-    msg = ""
-    toolCall = {}
-    for s in graph.stream(inputs, config, stream_mode="values"):
-        message = s["messages"][-1]
-        
-        if message.type == "ai":
-            msg += message.content
-        # elif message.type == "tool":
-        #     try:
-        #         toolCall = json.loads(message.content)
-        #         print("tool called", toolCall)
-        #     except json.JSONDecodeError:
-        #         toolCall = {}
-        
-    if not msg:
-        msg = "No meaningful response was generated."
-    return {"msg": msg, "toolCall": toolCall}
-
-def ChatModel(id, msg, messages):
-    config = {"configurable": {"thread_id": id}}
-    # Initialize embeddings and vector store
-    res = search_pdf_chunks(query=msg,top_k=2)
-    sources = []
-    for k in res:
-        sources.append(k["source"])
-
-    print("vector search results", res)
-    extraction = extract_college_info(messages, msg,res,sources)
-    if not extraction or not isinstance(extraction, dict):
-        extraction = {
-            "result": "",
-            "name": "",
-            "course": "",
-            "fees": "",
-            "scholarships": "",
-            "specific_details": "",
-            "options": [],
-            "dropdown_items": [],
-            "link": "",
-            "source": "",
-            "similarity": ""
-        }
-    similarities = [item.get("similarity", 0) for item in res]
-    extraction["similarity"] = similarities
-    return {"res": {"msg": extraction["result"], "toolCall": {}}, "info": extraction}
-
-# Add this function if it's not defined elsewhere in your codebase
-def search_pdf_chunks(query, top_k=2):
-    # Implement vector search functionality or use a placeholder
-    # This is a placeholder implementation
-    try:
-        # Attempt to use existing vector search if available
-        # You may need to adjust this based on your actual implementation
-        embeddings = OllamaEmbeddings(model="nomic-embed-text")
-        vector_store = MongoDBAtlasVectorSearch.from_connection_string(
-            connection_string="mongodb+srv://pranay:sih2024@cluster0.kx5kz.mongodb.net",
-            namespace="SIH.vectors",
-            embedding=embeddings,
-            index_name="vector_index"
-        )
-        results = vector_store.similarity_search_with_score(query, k=top_k)
-        return [{"content": doc.page_content, "source": doc.metadata.get("source", "unknown"), "similarity": score} 
-                for doc, score in results]
+        return loan_eligibility_parser.parse(response.content)
     except Exception as e:
-        print(f"Vector search error: {e}")
-        # Return placeholder results if search fails
-        return [{"content": "No content found", "source": "None", "similarity": 0}]
+        return {"error": str(e)}
 
-# Terminal interface for the chatbot
-def run_terminal_chat():
-    print("\n" + "="*50)
-    print("EduMitra - College Information Chatbot")
-    print("Type 'exit' or 'quit' to end the conversation")
-    print("="*50 + "\n")
-    
-    session_id = "terminal-" + str(hash(str(time.time())))
-    conversation_history = []
-    
+
+# =============================== #
+# 🔹 TOOL 2: LOAN APPLICATION GUIDANCE
+# =============================== #
+loan_application_schema = [
+    ResponseSchema(name="required_documents", description="List of required documents for the loan application"),
+    ResponseSchema(name="application_steps", description="Step-by-step guide on how to apply for the loan"),
+    ResponseSchema(name="common_mistakes", description="Common mistakes to avoid when applying for a loan"),
+]
+
+loan_application_parser = StructuredOutputParser.from_response_schemas(loan_application_schema)
+
+loan_application_prompt = ChatPromptTemplate.from_template("""
+You are a Loan Advisor AI. Guide the user through the process of applying for a loan.
+
+Loan Type: {loan_type}
+
+Response Format:  
+{format_instructions}
+""")
+
+
+def guide_loan_application(loan_type: str) -> dict:
+    """Guide users through the loan application process, including required documents and steps."""
+    prompt_with_instructions = loan_application_prompt.format(
+        loan_type=loan_type,
+        format_instructions=loan_application_parser.get_format_instructions()
+    )
+    response = llm.invoke(prompt_with_instructions)
+
+    try:
+        return loan_application_parser.parse(response.content)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================== #
+# 🔹 TOOL 3: FINANCIAL LITERACY TIPS
+# =============================== #
+financial_tips_schema = [
+    ResponseSchema(name="saving_tips", description="Effective saving strategies"),
+    ResponseSchema(name="credit_score_tips", description="How to improve and maintain a good credit score"),
+    ResponseSchema(name="investment_advice", description="Basic investment strategies"),
+]
+
+financial_tips_parser = StructuredOutputParser.from_response_schemas(financial_tips_schema)
+
+financial_tips_prompt = ChatPromptTemplate.from_template("""
+You are a Financial Advisor AI. Provide financial literacy tips to the user.
+
+User Interest: {topic}
+
+Response Format:  
+{format_instructions}
+""")
+
+
+def get_financial_tips(topic: str) -> dict:
+    """Provide financial literacy tips, such as saving strategies or credit score improvement."""
+    prompt_with_instructions = financial_tips_prompt.format(
+        topic=topic,
+        format_instructions=financial_tips_parser.get_format_instructions()
+    )
+    response = llm.invoke(prompt_with_instructions)
+
+    try:
+        return financial_tips_parser.parse(response.content)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================== #
+# 🔹 TOOL 4: FINANCIAL GOAL TRACKING
+# =============================== #
+
+financial_goal_schema = [
+    ResponseSchema(name="goal", description="The financial goal set by the user"),
+    ResponseSchema(name="current_status", description="Current financial status in relation to the goal"),
+    ResponseSchema(name="progress_percentage", description="Progress towards the goal in percentage"),
+    ResponseSchema(name="next_steps", description="Recommended next steps to achieve the goal"),
+    ResponseSchema(name="loan_advice", description="Loan-related advice tailored to the user's goal"),
+    ResponseSchema(name="next_due_date", description="Reminder for the next loan payment due date"),
+    ResponseSchema(name="refinancing_guidance", description="Guidance on refinancing options if applicable"),
+]
+
+financial_goal_parser = StructuredOutputParser.from_response_schemas(financial_goal_schema)
+
+financial_goal_prompt = ChatPromptTemplate.from_template("""
+You are a Financial Goal Advisor AI. Help the user track their financial goals and progress.
+
+User's Financial Goal: {goal}  
+Current Status: {status}
+
+Response Format:  
+{format_instructions}
+""")
+
+
+def track_financial_goal(goal: str, status: str) -> dict:
+    """Help users track financial goals, offer loan advice, and remind them of loan due dates."""
+    prompt_with_instructions = financial_goal_prompt.format(
+        goal=goal,
+        status=status,
+        format_instructions=financial_goal_parser.get_format_instructions()
+    )
+    response = llm.invoke(prompt_with_instructions)
+
+    try:
+        return financial_goal_parser.parse(response.content)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================== #
+# 🔹 INTEGRATED CHATBOT WITH TOOLS
+# =============================== #
+
+# Define tools for the chatbot agent
+tools = [
+    Tool(name="Loan Eligibility Check", func=check_loan_eligibility, description="Check loan eligibility based on financial details."),
+    Tool(name="Loan Application Guidance", func=guide_loan_application, description="Guide on loan application process."),
+    Tool(name="Financial Literacy Tips", func=get_financial_tips, description="Provide financial literacy and investment tips."),
+    Tool(name="Financial Goal Tracking", func=track_financial_goal, description="Track financial goals and loan payments."),
+]
+
+# Create an agent that can call these tools
+agent = initialize_agent(
+    tools=tools,
+    llm=llm,
+    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+    verbose=True,
+    memory=memory,
+)
+
+# Start chatbot interaction
+def chatbot():
+    print("\n🤖 Financial AI Chatbot: How can I assist you today?")
     while True:
-        # Get user input
-        user_input = input("\n👤 You: ")
-        
-        # Check if user wants to exit
-        if user_input.lower() in ['exit', 'quit', 'bye']:
-            print("\n🤖 EduMitra: Thank you for using our service. Goodbye!")
+        user_input = input("\nYou: ")
+        if user_input.lower() in ["exit", "quit"]:
+            print("👋 Goodbye! Have a great day!")
             break
-            
-        # Add user message to history
-        conversation_history.append(f"User: {user_input}")
-        conversation_text = "\n".join(conversation_history)
         
-        # Process with the chatbot
-        try:
-            result = ChatModel(session_id, user_input, conversation_text)
-            response = result["res"]["msg"]
-            
-            # Handle empty responses
-            if not response or response.strip() == "":
-                response = "I'm sorry, I couldn't generate a proper response. Please try rephrasing your question."
-            
-            # Add bot response to history
-            conversation_history.append(f"EduMitra: {response}")
-            
-            # Print bot response
-            print(f"\n🤖 EduMitra: {response}")
-            
-        except Exception as e:
-            print(f"\n🤖 EduMitra: Sorry, I encountered an error: {str(e)}")
-            print("Please try again or restart the application.")
+        response = agent.run(user_input)
+        print("\n💬 AI:", response)
 
+
+# Run chatbot if script is executed directly
 if __name__ == "__main__":
-    import time
-    
-    try:
-        run_terminal_chat()
-    except KeyboardInterrupt:
-        print("\n\nChat session terminated by user. Goodbye!")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred: {str(e)}")
+    chatbot()
