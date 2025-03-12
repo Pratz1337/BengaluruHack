@@ -638,6 +638,7 @@ def run_terminal_chat():
                     if doc_result["success"]:
                         current_document = doc_path
                         print(f"\n🤖 FinMate: Successfully processed {doc_result['pages_processed']} pages from '{doc_result['file_name']}'.")
+                        print(doc_result.get())
                         print(f"Document content will be included in our conversation context.")
                     else:
                         print(f"\n🤖 FinMate: Failed to process document: {doc_result.get('error', 'Unknown error')}")
