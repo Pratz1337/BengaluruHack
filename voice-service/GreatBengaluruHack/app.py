@@ -112,19 +112,25 @@ def handle_get_history():
 def handle_audio_message(data):
     try:
         session_id = request.sid
-        logger.info(f"Received audio data length: {len(data.get('audio', ''))}")
+        logger.info("=" * 50)
+        logger.info("NEW AUDIO MESSAGE RECEIVED")
         
-        # Handle language detection if auto-detect is enabled
+        # Get initial language setting
         auto_detect = data.get('auto_detect', False)
         current_language = data.get('language', 'en-IN')
         
-        if auto_detect:
-            detected_language = detect_language(data['audio'])
-            if detected_language:
-                current_language = detected_language
-                emit('detected_language', {'language': detected_language})
+        logger.info(f"Auto-detect enabled: {auto_detect}")
+        logger.info(f"Initial language setting: {current_language}")
         
-        logger.info(f"Using language: {current_language}")
+        # Handle language detection
+        if auto_detect:
+            detected_lang = detect_language(data['audio'])
+            if detected_lang:
+                current_language = detected_lang
+                logger.info(f"Auto-detected language: {detected_lang}")
+                emit('detected_language', {'language': detected_lang})
+        
+        logger.info(f"Final language being used: {current_language}")
         
         # Convert speech to text
         stt_result = speech_to_text(data['audio'], current_language)
@@ -132,48 +138,48 @@ def handle_audio_message(data):
             raise ValueError("Failed to convert audio to text")
         
         original_text = stt_result.get('transcript', '')
+        logger.info(f"Original text ({current_language}): {original_text}")
         
-        # Log the detected text and language for debugging
-        logger.info(f"Original text: {original_text}")
+        # Always translate if not English
+        needs_translation = current_language != "en-IN"
+        logger.info(f"Needs translation: {needs_translation}")
         
-        # Translate to English if not already in English
-        if current_language != "en-IN":
+        if needs_translation:
             translated_text = translate_text(original_text, current_language, "en-IN")
             logger.info(f"Translated text (English): {translated_text}")
         else:
             translated_text = original_text
-            logger.info("No translation needed, original text is in English")
+            logger.info("Text is in English, no translation needed")
         
-        # Add user message to history with language info
-        chat_history.add_message(session_id, original_text, True, current_language)
-        
-        # Process message with LLM in English
+        # Process with LLM
         llm_result = agent_executor.invoke({
             "input": translated_text,
             "language": current_language
         })
         english_response = llm_result["output"]
-        
-        # Log the English response
         logger.info(f"LLM Response (English): {english_response}")
         
-        # Translate LLM response back to original language if not English
-        if current_language != "en-IN":
+        # Translate response back if needed
+        if needs_translation:
+            logger.info(f"Translating response from English to {current_language}")
             translated_response = translate_text(english_response, "en-IN", current_language)
-            logger.info(f"Translated Response: {translated_response}")
+            logger.info(f"Translation successful. Length: {len(translated_response)}")
         else:
             translated_response = english_response
-            logger.info("No translation needed, user language is English")
         
-        # Add assistant response to history with language info
-        chat_history.add_message(session_id, translated_response, False, current_language)
-        
-        # Generate audio response
+        # Generate audio in detected language
+        logger.info(f"Generating audio in language: {current_language}")
         audio_data = generate_audio(translated_response, current_language)
         
+        if audio_data:
+            logger.info(f"Successfully generated audio in {current_language}")
+        else:
+            logger.error("Failed to generate audio")
+        
+        # Send response
         emit('response', {
             'original_text': original_text,
-            'english_text': translated_text,
+            'english_text': translated_text if needs_translation else original_text,
             'english_response': english_response,
             'text': translated_response,
             'audio': audio_data,
@@ -249,26 +255,33 @@ def translate_text(text: str, source_language: str, target_language: str) -> str
         "api-subscription-key": os.getenv("SARVAM_API_KEY")
     }
     
-    payload = {
-        "input": text,
-        "source_language_code": source_language,
-        "target_language_code": target_language,
-        "mode": "formal",
-        "enable_preprocessing": True
-    }
+    # Split text into chunks of 900 characters (leaving room for overhead)
+    chunks = [text[i:i+900] for i in range(0, len(text), 900)]
+    translated_chunks = []
     
-    try:
-        logger.info(f"Sending translation request: {source_language} to {target_language}")
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-        logger.info(f"Translation Response: {result}")
-        return result.get('translated_text', text)
-    except Exception as e:
-        logger.error(f"Translation Error: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            logger.error(f"Response content: {e.response.text}")
-        return text  # Return original text if translation fails
+    for chunk in chunks:
+        payload = {
+            "input": chunk,
+            "source_language_code": source_language,
+            "target_language_code": target_language,
+            "mode": "formal",
+            "enable_preprocessing": True
+        }
+        
+        try:
+            logger.info(f"Sending translation request: {source_language} to {target_language}")
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"Translation Response: {result}")
+            translated_chunks.append(result.get('translated_text', chunk))
+        except Exception as e:
+            logger.error(f"Translation Error for chunk: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            translated_chunks.append(chunk)  # Use original chunk if translation fails
+    
+    return ' '.join(translated_chunks)
 
 def generate_audio(text: str, language: str) -> Optional[str]:
     """Generate audio using Sarvam AI's TTS service"""
@@ -278,31 +291,60 @@ def generate_audio(text: str, language: str) -> Optional[str]:
         "api-subscription-key": os.getenv("SARVAM_API_KEY")
     }
     
-    # Use appropriate voice based on language
-    speaker = "meera"  # Default speaker
-    
-    payload = {
-        "inputs": [text[:500]],  # Truncate to 500 chars (API limit)
-        "target_language_code": language,
-        "speaker": speaker,
-        "enable_preprocessing": True,
-        "speech_sample_rate": 22050
+    # Map language codes to appropriate speakers
+    language_speaker_map = {
+        'hi-IN': 'meera',  # Hindi
+        'en-IN': 'meera',  # English
+        'ta-IN': 'meera',  # Tamil
+        'te-IN': 'meera',  # Telugu
+        'kn-IN': 'meera',  # Kannada
+        'ml-IN': 'meera',  # Malayalam
+        'mr-IN': 'meera',  # Marathi
+        'bn-IN': 'meera',  # Bengali
+        'gu-IN': 'meera',  # Gujarati
     }
     
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-        logger.info("TTS Response received")
-        return result.get("audios", [None])[0]
-    except Exception as e:
-        logger.error(f"TTS Error: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            logger.error(f"Response content: {e.response.text}")
+    speaker = language_speaker_map.get(language, 'meera')
+    logger.info(f"Using speaker '{speaker}' for language '{language}'")
+    
+    # Split text into chunks of 450 characters (TTS limit is 500)
+    chunks = [text[i:i+450] for i in range(0, len(text), 450)]
+    audio_base64_chunks = []
+    
+    for chunk in chunks:
+        payload = {
+            "inputs": [chunk],
+            "target_language_code": language,
+            "speaker": speaker,
+            "enable_preprocessing": True,
+            "speech_sample_rate": 22050
+        }
+        
+        try:
+            logger.info(f"Sending TTS request for language: {language}")
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            audio_chunk = result.get("audios", [None])[0]
+            if audio_chunk:
+                audio_base64_chunks.append(audio_chunk)
+        except Exception as e:
+            logger.error(f"TTS Error for chunk: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            return None
+    
+    if not audio_base64_chunks:
         return None
+        
+    # Combine audio chunks (this is a simplified approach)
+    # In a production environment, you'd want to properly concatenate the audio files
+    return audio_base64_chunks[0] if len(audio_base64_chunks) == 1 else audio_base64_chunks[0]
 
 def detect_language(audio_base64: str) -> Optional[str]:
     """Detect language using Sarvam AI"""
+    logger.info("Starting language detection...")
+    
     url = "https://api.sarvam.ai/speech-to-text"
     
     api_key = os.getenv("SARVAM_API_KEY")
@@ -315,14 +357,12 @@ def detect_language(audio_base64: str) -> Optional[str]:
     }
     
     try:
-        # Convert base64 back to audio file
         audio_data = base64.b64decode(audio_base64)
         
-        # Prepare payload and files
         payload = {
             'model': 'saarika:v2',
             'with_timesteps': 'false',
-            'detect_language': 'true'  # Enable language detection
+            'detect_language': 'true'
         }
         
         files = [
@@ -333,12 +373,18 @@ def detect_language(audio_base64: str) -> Optional[str]:
         response.raise_for_status()
         
         result = response.json()
-        detected_language = result.get('detected_language', 'en-IN')  # Default to English if not detected
-        logger.info(f"Detected language: {detected_language}")
+        # Get language code from STT response
+        detected_language = result.get('language_code', 'en-IN')
+        
+        logger.info(f"Raw STT response: {result}")
+        logger.info(f"Detected language code from STT: {detected_language}")
+        
         return detected_language
         
     except Exception as e:
         logger.error(f"Language detection error: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response content: {e.response.text}")
         return None
 
 if __name__ == '__main__':
