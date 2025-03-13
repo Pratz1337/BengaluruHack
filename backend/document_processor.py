@@ -1,6 +1,8 @@
 import os
 import re
 from typing import Dict, Any, List
+
+import requests
 from parse import SarvamDocumentParser
 
 class DocumentProcessor:
@@ -134,5 +136,68 @@ class DocumentProcessor:
         return {
             "extracted_info": extracted,
             "document_summary": brief_summary
+        }
+    
+    def translate_document_content(self, content: str, target_language: str) -> Dict[str, Any]:
+        """
+        Translate document content to the target language.
+        
+        Args:
+            content: Extracted document content text
+            target_language: Target language code (e.g., 'hi-IN', 'ta-IN')
+            
+        Returns:
+            Dictionary with original and translated content
+        """
+        url = "https://api.sarvam.ai/translate"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "api-subscription-key": self.api_key
+        }
+        
+        # Use English as default source language for documents
+        source_language = "en-IN"
+        
+        # Skip translation if target is English
+        if target_language == "en-IN":
+            return {
+                "success": True,
+                "original_content": content,
+                "translated_content": content,
+                "source_language": source_language,
+                "target_language": target_language
+            }
+        
+        # Split content into manageable chunks (900 chars max)
+        chunks = [content[i:i+900] for i in range(0, len(content), 900)]
+        translated_chunks = []
+        
+        for chunk in chunks:
+            payload = {
+                "input": chunk,
+                "source_language_code": source_language,
+                "target_language_code": target_language,
+                "mode": "formal",
+                "enable_preprocessing": True
+            }
+            
+            try:
+                response = requests.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+                translated_chunks.append(result.get('translated_text', chunk))
+            except Exception as e:
+                # Fall back to original chunk on error
+                translated_chunks.append(chunk)
+        
+        translated_content = ' '.join(translated_chunks)
+        
+        return {
+            "success": True,
+            "original_content": content,
+            "translated_content": translated_content,
+            "source_language": source_language,
+            "target_language": target_language
         }
 

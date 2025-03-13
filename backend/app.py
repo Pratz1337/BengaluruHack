@@ -324,6 +324,8 @@ def upload_document():
         
     file = request.files['file']
     chat_id = request.form.get('chat_id', 'default')
+    # Add target_language parameter with English as default
+    target_language = request.form.get('target_language', 'en-IN')
     
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
@@ -342,14 +344,25 @@ def upload_document():
         if result["success"]:
             key_info = document_processor.extract_key_information(result["content"])
             
+            # Translate document content if target language is specified
+            translation_result = {"success": True, "translated_content": None}
+            if target_language != "en-IN":
+                logger.info(f"Translating document to {target_language}")
+                translation_result = document_processor.translate_document_content(
+                    result["content"], 
+                    target_language
+                )
+            
             # Store processed document info for future chat messages
             processed_documents[chat_id] = {
                 "content": result["content"],
+                "translated_content": translation_result.get("translated_content"),
                 "file_name": result["file_name"],
                 "pages_processed": result["pages_processed"],
                 "total_pages": result["total_pages"],
                 "extracted_info": key_info.get("extracted_info", {}),
-                "document_summary": key_info.get("document_summary", "")
+                "document_summary": key_info.get("document_summary", ""),
+                "language": target_language
             }
             
             logger.info(f"Successfully processed document: {filename}, {result['pages_processed']} pages")
@@ -364,7 +377,9 @@ def upload_document():
                 "pages_processed": result["pages_processed"],
                 "total_pages": result["total_pages"],
                 "extracted_info": key_info.get("extracted_info", {}),
-                "document_summary": key_info.get("document_summary", "")
+                "document_summary": key_info.get("document_summary", ""),
+                "has_translation": translation_result.get("translated_content") is not None,
+                "language": target_language
             })
         
         return jsonify({"success": False, "error": result.get("error", "Failed to process document")}), 400
@@ -386,16 +401,24 @@ def handle_send_message(msg):
     try:
         chat_id = msg.get("id", "default_id")
         user_message = msg.get("msg", "")
+        user_language = msg.get("language", "en-IN")
         
         logger.info(f"Generating response for chat_id={chat_id}, msg='{user_message}'")
         
         # Add message to chat history
-        chat_history.add_message(chat_id, user_message, True, "en-IN")
+        chat_history.add_message(chat_id, user_message, True, user_language)
         
         # Check if there's a processed document for this session and build the context
         document_context = ""
         if chat_id in processed_documents:
             doc_info = processed_documents[chat_id]
+            
+            # Use translated content if available and matches user language
+            content_to_use = doc_info.get("content", "")
+            if doc_info.get("translated_content") and doc_info.get("language") == user_language:
+                content_to_use = doc_info.get("translated_content")
+                logger.info(f"Using translated document content for language: {user_language}")
+            
             document_context = f"""
             --- DOCUMENT ANALYSIS ---
             Document: {doc_info['file_name']}
@@ -405,16 +428,19 @@ def handle_send_message(msg):
             
             Extracted Information:
             {json.dumps(doc_info['extracted_info'], indent=2)}
+            
+            Document Content:
+            {content_to_use[:1000]}...
             --- END DOCUMENT ANALYSIS ---
             """
-            logger.info(f"Using cached document information for chat_id={chat_id}")
+            logger.info(f"Using document information for chat_id={chat_id}")
         
         # Pass the pre-processed document context (if any) to ChatModel
         result = ChatModel(user_message, document_context=document_context)
         
         # Add bot response to chat history
         if "msg" in result.get("res", {}):
-            chat_history.add_message(chat_id, result["res"]["msg"], False, "en-IN")
+            chat_history.add_message(chat_id, result["res"]["msg"], False, user_language)
         
         logger.info(f"Sending response for chat_id={chat_id}")
         emit("response", result)
@@ -598,6 +624,49 @@ def handle_download_summary_options():
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
     response.headers.add('Access-Control-Allow-Methods', 'POST')
     return response
+
+@app.route('/translate-document', methods=['POST'])
+def translate_document():
+    data = request.json
+    chat_id = data.get('chat_id', 'default')
+    target_language = data.get('target_language', 'en-IN')
+    
+    if chat_id not in processed_documents:
+        return jsonify({"error": "No document found for this session"}), 404
+    
+    doc_info = processed_documents[chat_id]
+    
+    # Check if already translated to this language
+    if doc_info.get("language") == target_language and doc_info.get("translated_content"):
+        return jsonify({
+            "success": True,
+            "already_translated": True,
+            "language": target_language
+        })
+    
+    try:
+        # Translate the document content
+        translation_result = document_processor.translate_document_content(
+            doc_info["content"], 
+            target_language
+        )
+        
+        if translation_result["success"]:
+            # Update the processed document with translated content
+            processed_documents[chat_id]["translated_content"] = translation_result["translated_content"]
+            processed_documents[chat_id]["language"] = target_language
+            
+            return jsonify({
+                "success": True,
+                "language": target_language,
+                "filename": doc_info["file_name"]
+            })
+        else:
+            return jsonify({"success": False, "error": "Failed to translate document"}), 400
+            
+    except Exception as e:
+        logger.error(f"Error translating document: {str(e)}")
+        return jsonify({"success": False, "error": f"Error translating document: {str(e)}"}), 500
 
 # CORS headers for all responses
 @app.after_request
