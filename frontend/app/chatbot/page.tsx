@@ -48,7 +48,7 @@ import { TypingIndicator } from "@/components/typing-indicator"
 
 // Environment variable with fallback
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
-const VOICE_API_URL = process.env.NEXT_PUBLIC_VOICE_API_URL || "http://localhost:8000"
+
 
 // Message interface
 interface Message {
@@ -185,6 +185,12 @@ export default function Home() {
         socket.emit("check_voice_support")
       })
 
+      // Add this line to listen for audio responses
+      socket.on("audio_response", handleSocketResponse)
+
+      // You already have this line for text responses
+      socket.on("response", handleSocketResponse)
+
       socket.on("voice_support", (supported) => {
         setIsVoiceServerAvailable(!!supported)
         console.log(`Voice support: ${supported ? "Available" : "Unavailable"}`)
@@ -201,8 +207,6 @@ export default function Home() {
         setIsConnected(false)
         toast.error("Connection error. Trying to reconnect...")
       })
-
-      socket.on("response", handleSocketResponse)
 
       socketRef.current = socket
     } catch (error) {
