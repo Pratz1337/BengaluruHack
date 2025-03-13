@@ -794,6 +794,14 @@ def detect_language(audio_base64: str) -> Optional[str]:
         if hasattr(e, 'response') and e.response is not None:
             logger.error(f"Response content: {e.response.text}")
         return None
-
+# Add this route near the top of your routes
+@app.route('/status', methods=['GET'])
+def check_status():
+    """Endpoint to check if voice service is available"""
+    return jsonify({
+        "status": "online",
+        "message": "Voice service is available",
+        "timestamp": datetime.now().isoformat()
+    })
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=8000, debug=True)

@@ -48,6 +48,7 @@ import { TypingIndicator } from "@/components/typing-indicator"
 
 // Environment variable with fallback
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+const VOICE_API_URL = process.env.NEXT_PUBLIC_VOICE_API_URL || "http://localhost:8000"
 
 // Message interface
 interface Message {
@@ -792,7 +793,6 @@ export default function Home() {
               variant="ghost"
               size="icon"
               onClick={handleToggleVoiceMode}
-              disabled={!isVoiceServerAvailable}
               title={isVoiceServerAvailable ? "Toggle voice mode" : "Voice mode unavailable"}
               className="text-white hover:bg-white hover:bg-opacity-10"
             >
