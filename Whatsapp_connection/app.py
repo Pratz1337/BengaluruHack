@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 import os
 import logging
@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Optional, List, Dict
 import json
 from twilio.twiml.messaging_response import MessagingResponse
-from twilio.rest import Client
 
 from langchain_groq import ChatGroq
 from langchain.agents import AgentExecutor, create_tool_calling_agent
@@ -21,6 +20,7 @@ load_dotenv()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret!')
 socketio = SocketIO(app, cors_allowed_origins="*")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -74,37 +74,19 @@ llm = ChatGroq(
 )
 
 # Agent setup
-system_prompt = """You are a multilingual financial assistant specializing in providing responses in multiple Indian languages.
-
-CRITICAL LANGUAGE RULES:
-1. You MUST RESPOND ONLY in the language specified by the user's input language code:
-   - kn-IN: ಕನ್ನಡ (Kannada)
-   - hi-IN: हिंदी (Hindi)
-   - ta-IN: தமிழ் (Tamil)
-   - te-IN: తెలుగు (Telugu)
-   - bn-IN: বাংলা (Bengali)
-   - en-IN: English
-
-2. Language Matching Examples:
-   - When language is "kn-IN": Respond in Kannada (ಕನ್ನಡ) only
-   Example: "ನಿಮ್ಮ ಹಣಕಾಸು ಪ್ರಶ್ನೆಗಳಿಗೆ ನಾನು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ"
-   
-   - When language is "hi-IN": Respond in Hindi (हिंदी) only
-   Example: "मैं आपके वित्तीय प्रश्नों में मदद करूंगा"
-
-3. STRICT RULES:
-   - NEVER mix languages
-   - NEVER use English when another language is specified
-   - NEVER transliterate - use proper script for each language
-   - If language code is kn-IN, response MUST be in Kannada script (ಕನ್ನಡ) only
-
-4. Format all numbers and financial terms in the appropriate script for the language specified.
-
-Remember: You are a financial expert who MUST maintain the user's language throughout the entire response."""
+system_prompt = """You are a Loan Advisor AI named "FinMate". Your job is to assist users with loan-related queries.
+  
+*Guidelines:*
+- Answer *only* questions related to *loans, interest rates, eligibility, repayment plans, and financial advice*.
+- Do *NOT* discuss non-loan-related topics.
+- Only call a function if a specific financial calculation or data retrieval is required.
+- For greetings, small talk, or general queries, respond directly in text.
+- If unsure, return a simple text-based response without calling any tools.
+"""
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
-    ("human", "Current language code: {language}. User's question: {input}"),
+    ("human", "User's original language: {language}. User's question (translated to English): {input}"),
     ("placeholder", "{agent_scratchpad}")
 ])
 
@@ -131,49 +113,76 @@ def handle_get_history():
 def handle_audio_message(data):
     try:
         session_id = request.sid
-        logger.info(f"Received audio data length: {len(data.get('audio', ''))}")
+        logger.info("=" * 50)
+        logger.info("NEW AUDIO MESSAGE RECEIVED")
         
-        # Handle language detection if auto-detect is enabled
+        # Get initial language setting
         auto_detect = data.get('auto_detect', False)
+        current_language = data.get('language', 'en-IN')
+        
+        logger.info(f"Auto-detect enabled: {auto_detect}")
+        logger.info(f"Initial language setting: {current_language}")
+        
+        # Handle language detection
         if auto_detect:
-            detected_language = detect_language(data['audio'])
-            if detected_language:
-                data['language'] = detected_language
-                emit('detected_language', {'language': detected_language})
+            detected_lang = detect_language(data['audio'])
+            if detected_lang:
+                current_language = detected_lang
+                logger.info(f"Auto-detected language: {detected_lang}")
+                emit('detected_language', {'language': detected_lang})
         
-        current_language = data.get('language', 'kn-IN')  # Default to Kannada instead of Telugu
-        logger.info(f"Language: {current_language}")
+        logger.info(f"Final language being used: {current_language}")
         
-        # Convert audio to text
-        text = stt_gladia(data['audio'], current_language)
-        if not text:
+        # Convert speech to text
+        stt_result = speech_to_text(data['audio'], current_language)
+        if not stt_result:
             raise ValueError("Failed to convert audio to text")
         
-        # Log the detected text and language for debugging
-        logger.info(f"Detected text: {text}")
-        logger.info(f"Using language: {current_language}")
+        original_text = stt_result.get('transcript', '')
+        logger.info(f"Original text ({current_language}): {original_text}")
         
-        # Add user message to history with language info
-        chat_history.add_message(session_id, text, True, current_language)
+        # Always translate if not English
+        needs_translation = current_language != "en-IN"
+        logger.info(f"Needs translation: {needs_translation}")
         
-        # Process message with explicit language context
-        result = agent_executor.invoke({
-            "input": text,
+        if needs_translation:
+            translated_text = translate_text(original_text, current_language, "en-IN")
+            logger.info(f"Translated text (English): {translated_text}")
+        else:
+            translated_text = original_text
+            logger.info("Text is in English, no translation needed")
+        
+        # Process with LLM
+        llm_result = agent_executor.invoke({
+            "input": translated_text,
             "language": current_language
         })
-        response_text = result["output"]
+        english_response = llm_result["output"]
+        logger.info(f"LLM Response (English): {english_response}")
         
-        # Log the response for debugging
-        logger.info(f"LLM Response: {response_text}")
+        # Translate response back if needed
+        if needs_translation:
+            logger.info(f"Translating response from English to {current_language}")
+            translated_response = translate_text(english_response, "en-IN", current_language)
+            logger.info(f"Translation successful. Length: {len(translated_response)}")
+        else:
+            translated_response = english_response
         
-        # Add assistant response to history with language info
-        chat_history.add_message(session_id, response_text, False, current_language)
+        # Generate audio in detected language
+        logger.info(f"Generating audio in language: {current_language}")
+        audio_data = generate_audio(translated_response, current_language)
         
-        # Generate audio response
-        audio_data = generate_audio(response_text, current_language)
+        if audio_data:
+            logger.info(f"Successfully generated audio in {current_language}")
+        else:
+            logger.error("Failed to generate audio")
         
+        # Send response
         emit('response', {
-            'text': response_text,
+            'original_text': original_text,
+            'english_text': translated_text if needs_translation else original_text,
+            'english_response': english_response,
+            'text': translated_response,
             'audio': audio_data,
             'timestamp': datetime.now().isoformat(),
             'language': current_language
@@ -183,85 +192,16 @@ def handle_audio_message(data):
         logger.error(f"Error processing audio: {str(e)}")
         emit('error', {'message': str(e)})
 
-def stt_gladia(audio_base64: str, language: str) -> Optional[str]:
+def speech_to_text(audio_base64: str, source_language: str) -> Optional[Dict]:
     """Convert speech to text using Sarvam AI"""
     url = "https://api.sarvam.ai/speech-to-text"
     
-    # Get API key and handle missing key scenario
+    # Get API key
     api_key = os.getenv("SARVAM_API_KEY")
     if not api_key:
         logger.error("Missing SARVAM_API_KEY environment variable")
         return None
-        
-    headers = {
-        "api-subscription-key": api_key
-    }
     
-    try:
-        # Convert base64 back to audio file
-        audio_data = base64.b64decode(audio_base64)
-        
-        # Prepare payload and files
-        payload = {
-            'model': 'saarika:v2',  # Using default model from example
-            'language_code': language,  # Use the input language instead of hardcoding
-            'with_timesteps': 'false'
-        }
-        
-        files = [
-            ('file', ('audio.wav', audio_data, 'audio/wav'))
-        ]
-        
-        # Log request info
-        logger.info(f"Sending request to {url}")
-        
-        # Use requests.request with multipart/form-data
-        response = requests.request("POST", url, headers=headers, data=payload, files=files)
-        response.raise_for_status()
-        
-        result = response.json()
-        logger.info(f"STT Response: {result}")
-        print(f"\n\n\n\n\n\n{result.get('transcript')}\n\n\n\n\n\n")
-        return result.get('transcript')
-        
-    except Exception as e:
-        logger.error(f"STT Error: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            logger.error(f"Response content: {e.response.text}")
-            logger.error(f"Response status code: {e.response.status_code}")
-        return None
-
-def generate_audio(text: str,language:str) -> Optional[str]:
-    """Generate audio using Sarvam AI"""
-    url = "https://api.sarvam.ai/text-to-speech"
-    headers = {
-        "Content-Type": "application/json",
-        "api-subscription-key": os.getenv("SARVAM_API_KEY")
-    }
-    
-    payload = {
-        "inputs": [text[:500]],  # Truncate to 500 chars
-        "target_language_code": language,  # Use the input language instead of hardcoding
-        "speaker": "meera"
-    }
-    
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json().get("audios", [None])[0]
-    except Exception as e:
-        logger.error(f"TTS Error: {str(e)}")
-        return None
-
-def detect_language(audio_base64: str) -> Optional[str]:
-    """Detect language using Sarvam AI"""
-    url = "https://api.sarvam.ai/speech-to-text"
-    
-    api_key = os.getenv("SARVAM_API_KEY")
-    if not api_key:
-        logger.error("Missing SARVAM_API_KEY environment variable")
-        return None
-        
     headers = {
         "api-subscription-key": api_key
     }
@@ -273,8 +213,157 @@ def detect_language(audio_base64: str) -> Optional[str]:
         # Prepare payload and files
         payload = {
             'model': 'saarika:v2',
+            'with_timesteps': 'false'
+        }
+        
+        files = [
+            ('file', ('audio.wav', audio_data, 'audio/wav'))
+        ]
+        
+        # Log request info
+        logger.info(f"Sending STT request to {url}")
+        
+        # Use requests.request with multipart/form-data
+        response = requests.request("POST", url, headers=headers, data=payload, files=files)
+        response.raise_for_status()
+        
+        result = response.json()
+        logger.info(f"STT Response: {result}")
+        
+        # Create a structured result with original transcript
+        return {
+            'transcript': result.get('transcript', ''),
+            'language_code': result.get('language_code', source_language)
+        }
+        
+    except Exception as e:
+        logger.error(f"STT Error: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response content: {e.response.text}")
+            logger.error(f"Response status code: {e.response.status_code}")
+        return None
+
+def translate_text(text: str, source_language: str, target_language: str) -> str:
+    """Translate text using Sarvam AI's translation API"""
+    url = "https://api.sarvam.ai/translate"
+    
+    # If source and target are the same, no need to translate
+    if source_language == target_language:
+        return text
+        
+    headers = {
+        "Content-Type": "application/json",
+        "api-subscription-key": os.getenv("SARVAM_API_KEY")
+    }
+    
+    # Split text into chunks of 900 characters (leaving room for overhead)
+    chunks = [text[i:i+900] for i in range(0, len(text), 900)]
+    translated_chunks = []
+    
+    for chunk in chunks:
+        payload = {
+            "input": chunk,
+            "source_language_code": source_language,
+            "target_language_code": target_language,
+            "mode": "formal",
+            "enable_preprocessing": True
+        }
+        
+        try:
+            logger.info(f"Sending translation request: {source_language} to {target_language}")
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"Translation Response: {result}")
+            translated_chunks.append(result.get('translated_text', chunk))
+        except Exception as e:
+            logger.error(f"Translation Error for chunk: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            translated_chunks.append(chunk)  # Use original chunk if translation fails
+    
+    return ' '.join(translated_chunks)
+
+def generate_audio(text: str, language: str) -> Optional[str]:
+    """Generate audio using Sarvam AI's TTS service"""
+    url = "https://api.sarvam.ai/text-to-speech"
+    headers = {
+        "Content-Type": "application/json",
+        "api-subscription-key": os.getenv("SARVAM_API_KEY")
+    }
+    
+    # Map language codes to appropriate speakers
+    language_speaker_map = {
+        'hi-IN': 'meera',  # Hindi
+        'en-IN': 'meera',  # English
+        'ta-IN': 'meera',  # Tamil
+        'te-IN': 'meera',  # Telugu
+        'kn-IN': 'meera',  # Kannada
+        'ml-IN': 'meera',  # Malayalam
+        'mr-IN': 'meera',  # Marathi
+        'bn-IN': 'meera',  # Bengali
+        'gu-IN': 'meera',  # Gujarati
+    }
+    
+    speaker = language_speaker_map.get(language, 'meera')
+    logger.info(f"Using speaker '{speaker}' for language '{language}'")
+    
+    # Split text into chunks of 450 characters (TTS limit is 500)
+    chunks = [text[i:i+450] for i in range(0, len(text), 450)]
+    audio_base64_chunks = []
+    
+    for chunk in chunks:
+        payload = {
+            "inputs": [chunk],
+            "target_language_code": language,
+            "speaker": speaker,
+            "enable_preprocessing": True,
+            "speech_sample_rate": 22050
+        }
+        
+        try:
+            logger.info(f"Sending TTS request for language: {language}")
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            audio_chunk = result.get("audios", [None])[0]
+            if audio_chunk:
+                audio_base64_chunks.append(audio_chunk)
+        except Exception as e:
+            logger.error(f"TTS Error for chunk: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
+            return None
+    
+    if not audio_base64_chunks:
+        return None
+        
+    # Combine audio chunks (this is a simplified approach)
+    # In a production environment, you'd want to properly concatenate the audio files
+    return audio_base64_chunks[0] if len(audio_base64_chunks) == 1 else audio_base64_chunks[0]
+
+def detect_language(audio_base64: str) -> Optional[str]:
+    """Detect language using Sarvam AI"""
+    logger.info("Starting language detection...")
+    
+    url = "https://api.sarvam.ai/speech-to-text"
+    
+    api_key = os.getenv("SARVAM_API_KEY")
+    if not api_key:
+        logger.error("Missing SARVAM_API_KEY environment variable")
+        return None
+        
+    headers = {
+        "api-subscription-key": api_key
+    }
+    
+    try:
+        audio_data = base64.b64decode(audio_base64)
+        
+        payload = {
+            'model': 'saarika:v2',
             'with_timesteps': 'false',
-            'detect_language': 'true'  # Enable language detection
+            'detect_language': 'true'
         }
         
         files = [
@@ -285,46 +374,127 @@ def detect_language(audio_base64: str) -> Optional[str]:
         response.raise_for_status()
         
         result = response.json()
-        detected_language = result.get('detected_language', 'en-IN')  # Default to English if not detected
-        logger.info(f"Detected language: {detected_language}")
+        # Get language code from STT response
+        detected_language = result.get('language_code', 'en-IN')
+        
+        logger.info(f"Raw STT response: {result}")
+        logger.info(f"Detected language code from STT: {detected_language}")
+        
         return detected_language
         
     except Exception as e:
         logger.error(f"Language detection error: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response content: {e.response.text}")
         return None
 
 @app.route('/whatsapp', methods=['POST'])
-def whatsapp():
-    incoming_msg = request.values.get('Body', '').strip()
-    from_number = request.values.get('From', '')
+def whatsapp_webhook():
+    """Handle incoming WhatsApp messages from Twilio"""
+    try:
+        logger.info("Received a request from Twilio")
+        incoming_msg = request.values.get('Body', '').strip()
+        from_number = request.values.get('From', '')
+        session_id = from_number
+
+        logger.info(f"Incoming WhatsApp message from {from_number}: {incoming_msg}")
+
+        if not incoming_msg:
+            logger.warning("Received empty message")
+            return send_whatsapp_response("I didn't receive a message. Please try again.")
+
+        # Process message and handle empty responses
+        response_text = process_message(incoming_msg, session_id)
+        if not response_text or not response_text.strip():
+            logger.warning("Empty response from AI")
+            response_text = "I apologize, but I couldn't generate a response. Please try rephrasing your question."
+
+        # Send chunked response
+        logger.info(f"Sending response of length {len(response_text)}")
+        return send_whatsapp_response(response_text)
     
-    # Process the incoming message and generate a response
-    response_text = process_message(incoming_msg)
+    except Exception as e:
+        logger.error(f"Error in webhook: {str(e)}", exc_info=True)
+        return send_whatsapp_response("I encountered an error. Please try again later.")
+
+def process_message(message: str, session_id: str) -> str:
+    """Process the incoming message with the Groq model and return the response"""
+    try:
+        logger.info(f"Processing message for session {session_id}: {message}")
+
+        # Add user message to chat history
+        chat_history.add_message(session_id, message, is_user=True)
+
+        # If the message is short (like "Hi"), don't use tools
+        if len(message.split()) <= 2:
+            return "Hello! How can I assist with your loan-related queries?"
+
+        # Process with LLM
+        llm_result = agent_executor.invoke({
+            "input": message,
+            "language": "en-IN"
+        })
+
+        # Ensure Groq returns valid output
+        response_text = llm_result.get("output", "").strip()
+
+        if not response_text:
+            logger.warning("LLM response was empty, using fallback response.")
+            response_text = "I couldn't process your request. Please try again."
+
+        logger.info(f"LLM response for session {session_id}: {response_text}")
+
+        # Add AI response to chat history
+        chat_history.add_message(session_id, response_text, is_user=False)
+
+        return response_text
+
+    except Exception as e:
+        logger.error(f"Error processing message for session {session_id}: {str(e)}")
+
+        return "An error occurred while processing your message."
+
+def send_whatsapp_response(message: str):
+    """Send a formatted response back to WhatsApp in chunks."""
+    MAX_CHUNK_SIZE = 1600  # WhatsApp message character limit
     
-    # Create a Twilio response
+    # Split the message into chunks while preserving word boundaries
+    words = message.split()
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for word in words:
+        if current_length + len(word) + 1 > MAX_CHUNK_SIZE:
+            chunks.append(' '.join(current_chunk))
+            current_chunk = [word]
+            current_length = len(word)
+        else:
+            current_chunk.append(word)
+            current_length += len(word) + 1
+    
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+    
+    # Add message counter to chunks if multiple
+    if len(chunks) > 1:
+        chunks = [f"({i+1}/{len(chunks)}) {chunk}" for i, chunk in enumerate(chunks)]
+    
+    logger.info(f"Splitting response into {len(chunks)} chunks")
+    
+    # Log each chunk before sending
+    for i, chunk in enumerate(chunks):
+        logger.debug(f"Chunk {i+1}: {chunk}")
+    
+    # Create response with all chunks
     resp = MessagingResponse()
-    resp.message(response_text)
+    for chunk in chunks:
+        resp.message(chunk)
     
+    logger.info("Final response being sent to WhatsApp")
+    logger.info(f"Message being sent to WhatsApp: {message}")
     return str(resp)
-
-def process_message(message):
-    # Implement your message processing logic here
-    return "This is a response from your application."
-
-# Access Twilio credentials
-account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-
-# Initialize Twilio client
-client = Client(account_sid, auth_token)
-
-# Example: Send a message
-message = client.messages.create(
-    body="Hello from your application!",
-    from_='whatsapp:+14155238886',  # Twilio sandbox number
-    to='whatsapp:+918762064431'  # Replace with a valid, verified number
-)
-print(message.sid)
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=8000, debug=True)
+
