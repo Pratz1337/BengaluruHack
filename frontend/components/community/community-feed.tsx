@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Search, TrendingUp, Clock, Bookmark, Filter, PlusCircle, Share2, MessageSquare, Heart } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import Image from "next/image"
 import { cn } from "@/lib/utils"
+import NewThreadModal from "@/components/community/new-thread-modal"
+import TranslationDropdown from "@/components/community/translation-dropdown"
+import { useToast } from "@/hooks/use-toast"
 
 // Types for our data
 type Category =
@@ -31,6 +34,7 @@ type Thread = {
   date: string
   likes: number
   comments: number
+  liked?: boolean
 }
 
 // Sample data
@@ -83,6 +87,9 @@ export default function CommunityFeed() {
   const [activeTab, setActiveTab] = useState<Tab>("latest")
   const [activeCategory, setActiveCategory] = useState<Category>("All")
   const [filteredThreads, setFilteredThreads] = useState<Thread[]>(THREADS)
+  const [isNewThreadModalOpen, setIsNewThreadModalOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const { toast } = useToast()
 
   // Filter threads based on active category
   const handleCategoryChange = (category: Category) => {
@@ -126,6 +133,62 @@ export default function CommunityFeed() {
     setFilteredThreads(sortedThreads)
   }
 
+  const handleSearch = (query: string) => {
+    setSearchQuery(query)
+
+    if (!query.trim()) {
+      // If search is cleared, reset to filtered by category
+      handleCategoryChange(activeCategory)
+      return
+    }
+
+    // Filter threads by search query
+    const searchResults = THREADS.filter(
+      (thread) =>
+        thread.title.toLowerCase().includes(query.toLowerCase()) ||
+        thread.content.toLowerCase().includes(query.toLowerCase()) ||
+        thread.author.name.toLowerCase().includes(query.toLowerCase()) ||
+        thread.category.toLowerCase().includes(query.toLowerCase()),
+    )
+
+    // Apply category filter if not 'All'
+    if (activeCategory !== "All") {
+      setFilteredThreads(searchResults.filter((thread) => thread.category === activeCategory))
+    } else {
+      setFilteredThreads(searchResults)
+    }
+  }
+
+  const handleNewThreadSubmit = async (data: any) => {
+    // Simulate API call
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+
+    // Create a new thread
+    const newThread: Thread = {
+      id: Date.now().toString(),
+      title: data.title,
+      content: data.content,
+      category: data.category as Category,
+      author: {
+        name: "Alex Morgan",
+        avatar: "/placeholder.svg?height=40&width=40",
+      },
+      date: "Just now",
+      likes: 0,
+      comments: 0,
+    }
+
+    // Add to threads and update filtered threads
+    THREADS.unshift(newThread)
+
+    // Update filtered threads based on current category
+    if (activeCategory === "All" || activeCategory === newThread.category) {
+      setFilteredThreads([newThread, ...filteredThreads])
+    }
+
+    return true
+  }
+
   const categories: Category[] = [
     "All",
     "Loan Eligibility",
@@ -141,7 +204,7 @@ export default function CommunityFeed() {
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-3xl font-bold">Community</h2>
-          <Button className="bg-purple-600 hover:bg-purple-700">
+          <Button className="bg-purple-600 hover:bg-purple-700" onClick={() => setIsNewThreadModalOpen(true)}>
             <PlusCircle className="mr-2 h-4 w-4" />
             New Thread
           </Button>
@@ -149,7 +212,12 @@ export default function CommunityFeed() {
 
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-          <Input placeholder="Search discussions..." className="pl-10 pr-10 py-2 w-full border-gray-300 rounded-md" />
+          <Input
+            placeholder="Search discussions..."
+            className="pl-10 pr-10 py-2 w-full border-gray-300 rounded-md"
+            value={searchQuery}
+            onChange={(e) => handleSearch(e.target.value)}
+          />
           <Button variant="ghost" size="icon" className="absolute right-2 top-1/2 transform -translate-y-1/2">
             <Filter className="h-4 w-4" />
           </Button>
@@ -219,56 +287,111 @@ export default function CommunityFeed() {
             <ThreadList threads={filteredThreads} />
           </TabsContent>
         </Tabs>
+        <NewThreadModal
+          isOpen={isNewThreadModalOpen}
+          onClose={() => setIsNewThreadModalOpen(false)}
+          onSubmit={handleNewThreadSubmit}
+        />
       </div>
     </section>
   )
 }
 
 function ThreadList({ threads }: { threads: Thread[] }) {
+  const [likedThreads, setLikedThreads] = useState<Record<string, boolean>>({})
+  const [threadLikes, setThreadLikes] = useState<Record<string, number>>({})
+
+  // Initialize likes from threads
+  useEffect(() => {
+    const likes: Record<string, number> = {}
+    threads.forEach((thread) => {
+      likes[thread.id] = thread.likes
+    })
+    setThreadLikes(likes)
+  }, [threads])
+
+  const handleLike = (threadId: string) => {
+    setLikedThreads((prev) => {
+      const newLiked = { ...prev }
+      newLiked[threadId] = !prev[threadId]
+      return newLiked
+    })
+
+    setThreadLikes((prev) => {
+      const newLikes = { ...prev }
+      newLikes[threadId] = prev[threadId] + (likedThreads[threadId] ? -1 : 1)
+      return newLikes
+    })
+  }
+
+  const handleComment = (threadId: string) => {
+    // In a real app, this would open a comment form or navigate to the thread
+    window.location.href = `/thread/${threadId}`
+  }
+
   return (
     <div className="space-y-6">
-      {threads.map((thread) => (
-        <div key={thread.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-          <div className="flex items-start gap-3 mb-3">
-            <Image
-              src={thread.author.avatar || "/placeholder.svg"}
-              alt={thread.author.name}
-              width={40}
-              height={40}
-              className="rounded-full"
-            />
-            <div>
-              <Badge
-                variant="outline"
-                className="mb-2 text-purple-600 bg-purple-50 hover:bg-purple-100 border-purple-200"
-              >
-                {thread.category}
-              </Badge>
-              <h3 className="text-xl font-semibold mb-1">{thread.title}</h3>
-              <p className="text-gray-700 mb-3">{thread.content}</p>
-              <div className="flex items-center text-sm text-gray-500">
-                <span className="font-medium">{thread.author.name}</span>
-                <span className="mx-2">•</span>
-                <span>{thread.date}</span>
+      {threads.length === 0 ? (
+        <div className="text-center py-8">
+          <p className="text-gray-500">No threads found</p>
+        </div>
+      ) : (
+        threads.map((thread) => (
+          <div key={thread.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+            <div className="flex items-start gap-3 mb-3">
+              <Image
+                src={thread.author.avatar || "/placeholder.svg"}
+                alt={thread.author.name}
+                width={40}
+                height={40}
+                className="rounded-full"
+              />
+              <div className="flex-1">
+                <div className="flex justify-between">
+                  <Badge
+                    variant="outline"
+                    className="mb-2 text-purple-600 bg-purple-50 hover:bg-purple-100 border-purple-200"
+                  >
+                    {thread.category}
+                  </Badge>
+                  <TranslationDropdown text={`${thread.title}\n\n${thread.content}`} />
+                </div>
+                <h3 className="text-xl font-semibold mb-1">{thread.title}</h3>
+                <p className="text-gray-700 mb-3">{thread.content}</p>
+                <div className="flex items-center text-sm text-gray-500">
+                  <span className="font-medium">{thread.author.name}</span>
+                  <span className="mx-2">•</span>
+                  <span>{thread.date}</span>
+                </div>
               </div>
             </div>
+            <div className="flex items-center gap-4 pt-2 border-t border-gray-100">
+              <Button
+                variant="ghost"
+                size="sm"
+                className={`text-gray-600 flex items-center gap-1 ${likedThreads[thread.id] ? "text-red-500" : ""}`}
+                onClick={() => handleLike(thread.id)}
+              >
+                <Heart className="h-4 w-4" fill={likedThreads[thread.id] ? "currentColor" : "none"} />
+                <span>{threadLikes[thread.id] || thread.likes}</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-gray-600 flex items-center gap-1"
+                onClick={() => handleComment(thread.id)}
+              >
+                <MessageSquare className="h-4 w-4" />
+                <span>{thread.comments}</span>
+              </Button>
+              <Button variant="ghost" size="sm" className="text-gray-600 flex items-center gap-1 ml-auto">
+                <Share2 className="h-4 w-4" />
+                <span>Share</span>
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-4 pt-2 border-t border-gray-100">
-            <Button variant="ghost" size="sm" className="text-gray-600 flex items-center gap-1">
-              <Heart className="h-4 w-4" />
-              <span>{thread.likes}</span>
-            </Button>
-            <Button variant="ghost" size="sm" className="text-gray-600 flex items-center gap-1">
-              <MessageSquare className="h-4 w-4" />
-              <span>{thread.comments}</span>
-            </Button>
-            <Button variant="ghost" size="sm" className="text-gray-600 flex items-center gap-1 ml-auto">
-              <Share2 className="h-4 w-4" />
-              <span>Share</span>
-            </Button>
-          </div>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   )
 }

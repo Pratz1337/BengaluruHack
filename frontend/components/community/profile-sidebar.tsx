@@ -1,9 +1,15 @@
+"use client"
+
+import { useState } from "react"
 import { MapPin, ExternalLink, Mail, Calendar } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import Image from "next/image"
+import MessageModal from "@/components/community/message-modal"
 
 export default function ProfileSidebar() {
+  const [isMessageModalOpen, setIsMessageModalOpen] = useState(false)
+
   return (
     <aside className="w-full md:w-80 p-6 border-r border-gray-200">
       <div className="flex flex-col items-center md:items-start">
@@ -82,10 +88,20 @@ export default function ProfileSidebar() {
 
         <div className="flex w-full gap-2">
           <Button className="flex-1 bg-purple-600 hover:bg-purple-700">Follow</Button>
-          <Button variant="outline" className="flex-1">
+          <Button variant="outline" className="flex-1" onClick={() => setIsMessageModalOpen(true)}>
             Message
           </Button>
         </div>
+
+        <MessageModal
+          isOpen={isMessageModalOpen}
+          onClose={() => setIsMessageModalOpen(false)}
+          recipient={{
+            name: "Alex Morgan",
+            avatar: "/placeholder.svg?height=40&width=40",
+            username: "alexmorgan",
+          }}
+        />
       </div>
     </aside>
   )
