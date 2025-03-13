@@ -435,10 +435,16 @@ export default function Home() {
         }))
         .filter((msg) => msg.user || msg.bot)
 
+      // Add timestamp to prevent CORS caching issues
+      const timestamp = Date.now();
+
       // Generate summary
-      const response = await fetch(`${API_URL}/generate-summary`, {
+      const response = await fetch(`${API_URL}/generate-summary?t=${timestamp}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
         body: JSON.stringify({ conversation: formattedMessages }),
       })
 
@@ -449,9 +455,12 @@ export default function Home() {
       const data = await response.json()
 
       // Download summary as PDF
-      const downloadResponse = await fetch(`${API_URL}/download-summary`, {
+      const downloadResponse = await fetch(`${API_URL}/download-summary?t=${timestamp}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/pdf"
+        },
         body: JSON.stringify({ summary: data.summary }),
       })
 
@@ -459,7 +468,7 @@ export default function Home() {
         throw new Error(`HTTP error! status: ${downloadResponse.status}`)
       }
 
-      // Create download link
+      // Rest of the function remains the same
       const blob = await downloadResponse.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -473,7 +482,7 @@ export default function Home() {
       toast.success("Summary downloaded successfully")
     } catch (error) {
       console.error("Error downloading summary:", error)
-      toast.error("Failed to download summary")
+      toast.error(`Error downloading summary: ${error}`)
     } finally {
       setIsFetchingData(false)
     }
@@ -798,11 +807,11 @@ export default function Home() {
                 </Button>
               </SheetTrigger>
               <SheetContent side="right" className="w-[80vw]">
-                <div className="h-full flex flex-col pb-8">
+                <div className=" flex flex-col ">
                   <h2 className="text-lg font-semibold py-4">Financial Information</h2>
 
                   <Tabs defaultValue="info" className="flex-1">
-                    <TabsList className="grid grid-cols-3 mb-4">
+                    <TabsList className="grid grid-cols-3 py-80 ">
                       <TabsTrigger value="info">Loan Info</TabsTrigger>
                       <TabsTrigger value="rates">Rates</TabsTrigger>
                       <TabsTrigger value="tips">Tips</TabsTrigger>
@@ -1099,7 +1108,7 @@ export default function Home() {
             </div>
 
             <Tabs defaultValue="info" className="flex-1">
-              <TabsList className="grid grid-cols-3 p-4">
+              <TabsList className="grid grid-cols-3 ">
                 <TabsTrigger value="info">Loan Info</TabsTrigger>
                 <TabsTrigger value="rates">Rates</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>

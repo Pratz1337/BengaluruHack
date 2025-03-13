@@ -45,83 +45,44 @@ def format_summary_for_chat(summary):
             else:
                 formatted_content.append(f"\n#### {stripped_line}\n")
         elif stripped_line.startswith('•') or stripped_line.startswith('-'):
-            formatted_content.append(f"- {stripped_line[1:].strip()}")
+            formatted_content.append(f"- {stripped_line[1:].trip()}")
         else:
             formatted_content.append(stripped_line)
 
     return "\n".join(formatted_content)
 
-@summary_bp.route('/generate-summary', methods=['POST'])
+@summary_bp.route('/generate-summary', methods=['POST', 'OPTIONS'])
 def generate_summary():
+    if request.method == "OPTIONS":
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        return response
+
     data = request.json
     conversation_history = data.get('conversation', [])
     
     if not conversation_history:
         return jsonify({"error": "No conversation history available for summarization."}), 400
 
-    # Format the entire conversation as a string for the prompt
+    # Format conversation for the prompt
     formatted_conversation = ""
     for message in conversation_history:
         formatted_conversation += f"User: {message['user']}\nBot: {message['bot']}\n\n"
 
-    # Create the financial advisor summarization prompt
     prompt = f"""
-As an AI specialized in providing financial and loan advice as "FinMate", create a structured summary of the following conversation in a professional style. Focus on the financial information, loan details, and advice provided.
-
+As an AI specialized in providing financial and loan advice as "FinMate", create a structured summary of the following conversation in a professional style...
+    
 Conversation to summarize:
 {formatted_conversation}
-
-Please structure the summary as follows:
-
-### **Introduction**
-- Briefly introduce the context of the conversation and the primary financial topics discussed.
-
-### **Main Financial Topics Discussed**
-- List the key financial subjects covered during the conversation.
-- Use bullet points for clarity.
-
-### **Loan Information**
-- For each loan type discussed, provide:
-  - Interest rates mentioned
-  - Eligibility criteria
-  - Repayment options
-  - Documentation requirements
-  - Include numerical data where mentioned (e.g., interest percentages, loan amounts, terms)
-
-### **Financial Advice Provided**
-- Summarize the financial recommendations and guidance given
-- Include any credit score advice, saving tips, or investment guidance
-- Highlight strategies suggested for financial management
-
-### **Key Financial Takeaways**
-- Summarize the most important financial points or conclusions from the discussion.
-
-### **Next Steps (if applicable)**
-- List any recommended financial actions or follow-up steps suggested during the conversation.
-
-### **Conclusion**
-- Provide a concise closing statement summarizing the overall financial discussion.
-
-NOTE---->
-- Structure the response using markdown syntax to ensure readability (e.g., headers, lists).
-- Use clear, professional, and user-friendly language.
-- Incorporate any numerical data, interest rates, or loan terms if mentioned in the conversation.
-- Ensure financial information is accurate and contextually relevant.
-- Use formatting elements such as **bold**, *italic*, or `code` for emphasis where appropriate.
-- Present all financial data clearly and avoid any unrelated information.
 """
-
-    # Call the Groq LLM to generate the summary
     try:
         summary_response = summary_llm.invoke(prompt)
-
-        # Extract the content appropriately
         if hasattr(summary_response, 'content'):
             summary_text = summary_response.content 
         else:
-            summary_text = str(summary_response)  # Fallback to string conversion
-        
-        # Add the summary to the response
+            summary_text = str(summary_response)
         return jsonify({
             "summary": summary_text,
             "status": "Summary generated successfully"
@@ -227,16 +188,21 @@ def format_summary(summary):
     
     return story
 
-@summary_bp.route('/download-summary', methods=['POST'])
+@summary_bp.route('/download-summary', methods=['POST', 'OPTIONS'])
 def download_summary():
+    if request.method == "OPTIONS":
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        return response
+
     data = request.json
     summary = data.get('summary', '')
-
     if not summary:
         return jsonify({"error": "No summary available for download."}), 400
 
     try:
-        # Create PDF
         buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -246,12 +212,8 @@ def download_summary():
             topMargin=48,
             bottomMargin=48
         )
-        
-        # Format and build PDF
         story = format_summary(summary)
         doc.build(story)
-        
-        # Prepare response
         buffer.seek(0)
         return send_file(
             buffer,
@@ -259,7 +221,6 @@ def download_summary():
             download_name=f'FinMate_Summary_{datetime.now().strftime("%Y%m%d_%H%M")}.pdf',
             mimetype='application/pdf'
         )
-        
     except Exception as e:
         print(f"Error generating PDF: {e}")
         return jsonify({"error": "Failed to generate PDF"}), 500

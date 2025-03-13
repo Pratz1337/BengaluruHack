@@ -397,7 +397,7 @@ def extract_loan_info(msg, document_context=""):
     
     Args:
         msg: User message
-        document_context: Optional context from parsed documents
+        document_context: Optional context from parsed documents (as string)
     """
     prompt_with_instructions = loan_prompt.format(
         msg=msg,
@@ -454,44 +454,16 @@ def execute_tool_call(tool_name, tool_params):
         print(f"Error executing tool {tool_name}: {str(e)}")
         return {"error": str(e)}
 
-def ChatModel(msg, document_path=None):
+def ChatModel(msg, document_context):
     """
     Processes the user query and provides loan-related information while maintaining chat history.
-    Executes tool calls if needed based on LLM decision.
+    It assumes that document_context is already the pre-processed content from a previously uploaded document.
     
     Args:
         msg: User message
-        document_path: Optional path to a document to analyze
+        document_context: a string containing pre-processed document content (empty string if none)
     """
-    document_context = ""
-    
-    # Process document if provided
-    if document_path and os.path.exists(document_path):
-        print(f"Processing document: {document_path}")
-        doc_result = document_processor.process_document(document_path)
-        
-        if doc_result["success"]:
-            # Extract key information from the document
-            key_info = document_processor.extract_key_information(doc_result["content"])
-            
-            # Format document context with clean text
-            document_context = f"""
-            --- DOCUMENT ANALYSIS ---
-            Document: {doc_result['file_name']}
-            Pages Processed: {doc_result['pages_processed']} of {doc_result['total_pages']}
-            
-            {key_info.get('document_summary', '')}
-            
-            Extracted Information:
-            {json.dumps(key_info.get('extracted_info', {}), indent=2)}
-            --- END DOCUMENT ANALYSIS ---
-            """
-            print(f"Successfully processed {doc_result['pages_processed']} pages from {doc_result['file_name']}")
-        else:
-            document_context = f"Note: Failed to process document. Error: {doc_result.get('error', 'Unknown error')}"
-            print(f"Failed to process document: {doc_result.get('error', 'Unknown error')}")
-    
-    # Extract information with document context
+    # Directly use the provided document_context; do NOT default to any parsing logic.
     extracted_info = extract_loan_info(msg, document_context)
     
     # Check if we need to make a tool call
@@ -502,12 +474,10 @@ def ChatModel(msg, document_path=None):
     if tool_call_needed and tool_call_needed.strip():
         print(f"Tool call detected: {tool_call_needed}")
         try:
-            # Try to parse tool parameters if they're provided as a string
             if isinstance(tool_parameters, str):
                 try:
                     tool_parameters = json.loads(tool_parameters)
                 except:
-                    # If JSON parsing fails, create a simple parameter dictionary based on the tool
                     if tool_call_needed == "Loan Eligibility Check":
                         tool_parameters = {"user_info": msg}
                     elif tool_call_needed == "Loan Application Guidance":
@@ -517,34 +487,31 @@ def ChatModel(msg, document_path=None):
                     elif tool_call_needed == "Financial Goal Tracking":
                         tool_parameters = {"goal": msg, "status": "Unknown"}
             
-            # Execute the tool call
             tool_result = execute_tool_call(tool_call_needed, tool_parameters)
             print(f"Tool result: {tool_result}")
             
-            # Enhance the response with tool results
             if isinstance(tool_result, dict) and "error" not in tool_result:
                 if tool_call_needed == "Loan Eligibility Check":
                     extracted_info["eligibility"] = tool_result.get("eligibility_result", "")
                     extracted_info["loan_type"] = tool_result.get("loan_type", extracted_info.get("loan_type", ""))
-                    extracted_info["additional_info"] = (extracted_info.get("additional_info", "") + 
-                                                        f"\nIncome Requirement: {tool_result.get('income_requirement', '')}" +
-                                                        f"\nCredit Score: {tool_result.get('credit_score', '')}" +
-                                                        f"\nEmployment Status: {tool_result.get('employment_status', '')}")
-                
+                    extracted_info["additional_info"] = (
+                        extracted_info.get("additional_info", "") + 
+                        f"\nIncome Requirement: {tool_result.get('income_requirement', '')}" +
+                        f"\nCredit Score: {tool_result.get('credit_score', '')}" +
+                        f"\nEmployment Status: {tool_result.get('employment_status', '')}"
+                    )
                 elif tool_call_needed == "Loan Application Guidance":
                     extracted_info["additional_info"] = (
                         f"**Required Documents:**\n{tool_result.get('required_documents', '')}\n\n" +
                         f"**Application Steps:**\n{tool_result.get('application_steps', '')}\n\n" +
                         f"**Common Mistakes to Avoid:**\n{tool_result.get('common_mistakes', '')}"
                     )
-                
                 elif tool_call_needed == "Financial Literacy Tips":
                     extracted_info["additional_info"] = (
                         f"**Saving Tips:**\n{tool_result.get('saving_tips', '')}\n\n" +
                         f"**Credit Score Tips:**\n{tool_result.get('credit_score_tips', '')}\n\n" +
                         f"**Investment Advice:**\n{tool_result.get('investment_advice', '')}"
                     )
-                
                 elif tool_call_needed == "Financial Goal Tracking":
                     extracted_info["additional_info"] = (
                         f"**Goal Progress:** {tool_result.get('progress_percentage', '')}%\n\n" +
@@ -555,40 +522,28 @@ def ChatModel(msg, document_path=None):
                         extracted_info["additional_info"] += f"\n\n**Next Payment Due:** {tool_result.get('next_due_date', '')}"
         except Exception as e:
             print(f"Error in tool execution: {str(e)}")
-            extracted_info["additional_info"] = f"{extracted_info.get('additional_info', '')}\nNote: Could not retrieve all information."
-
-    # Save conversation to memory
+            extracted_info["additional_info"] = (
+                extracted_info.get("additional_info", "") +
+                "\nNote: Could not retrieve all information."
+            )
+    
     memory.save_context({"input": msg}, {"output": extracted_info["result"]})
-
-    # Format the response
+    
     formatted_response = ""
-    
-    # Add the main result/title if available
-    if extracted_info["result"]:
+    if extracted_info.get("result"):
         formatted_response += f"{extracted_info['result']}\n\n"
-    
-    # Add loan type info
-    if extracted_info["loan_type"]:
+    if extracted_info.get("loan_type"):
         formatted_response += f"**Loan Type:** {extracted_info['loan_type']}\n\n"
-    
-    # Add interest rate info
-    if extracted_info["interest_rate"]:
+    if extracted_info.get("interest_rate"):
         formatted_response += f"**Interest Rate:** {extracted_info['interest_rate']}\n\n"
-    
-    # Add eligibility info
-    if extracted_info["eligibility"]:
+    if extracted_info.get("eligibility"):
         formatted_response += f"**Eligibility:** {extracted_info['eligibility']}\n\n"
-    
-    # Add repayment options
-    if extracted_info["repayment_options"]:
+    if extracted_info.get("repayment_options"):
         formatted_response += f"**Repayment Options:** {extracted_info['repayment_options']}\n\n"
-    
-    # Add additional info
-    if extracted_info["additional_info"]:
+    if extracted_info.get("additional_info"):
         formatted_response += f"**Additional Information:**\n{extracted_info['additional_info']}"
     
-    # If formatted response is still empty, use just the result field
     if not formatted_response.strip():
-        formatted_response = extracted_info["result"] or "I couldn't process your request."
-
+        formatted_response = extracted_info.get("result") or "I couldn't process your request."
+    
     return {"res": {"msg": formatted_response}, "info": extracted_info}

@@ -15,6 +15,7 @@ class DocumentProcessor:
         """
         self.api_key = api_key
         self.parser = SarvamDocumentParser(api_key)
+        self.document_cache = {}  # Add a cache to store processed documents
     
     def clean_xml_content(self, content: str) -> str:
         """
@@ -67,6 +68,10 @@ class DocumentProcessor:
         if not os.path.exists(file_path):
             return {"success": False, "error": f"File not found: {file_path}"}
         
+        # Check if document is already in cache
+        if file_path in self.document_cache:
+            return self.document_cache[file_path]
+        
         # Process using the multi-page parser
         result = self.parser.parse_pdf_multiple_pages(file_path, max_pages=max_pages)
         
@@ -76,13 +81,18 @@ class DocumentProcessor:
         # Clean XML content before returning
         clean_content = self.clean_xml_content(result["raw_xml"])
         
-        return {
+        processed_result = {
             "success": True,
             "content": clean_content,
             "pages_processed": result["pages_parsed"],
             "total_pages": result["total_pages"],
             "file_name": result["file_name"]
         }
+        
+        # Store in cache
+        self.document_cache[file_path] = processed_result
+        
+        return processed_result
 
     def extract_key_information(self, content: str) -> Dict[str, Any]:
         """
@@ -125,3 +135,4 @@ class DocumentProcessor:
             "extracted_info": extracted,
             "document_summary": brief_summary
         }
+

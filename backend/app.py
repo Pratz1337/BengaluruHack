@@ -1,4 +1,5 @@
 from io import BytesIO, StringIO
+import json
 import os
 import logging
 import traceback
@@ -25,7 +26,7 @@ app.secret_key = "your_unique_secret_key"
 
 # Register the summary blueprint
 app.register_blueprint(summary_bp)
-
+processed_documents = {}
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,57 +73,97 @@ def extract_text_from_csv(file_storage) -> str:
 @app.route('/upload-document', methods=['POST'])
 def upload_document():
     if 'file' not in request.files:
-        return jsonify({"error": "No file part in the request."}), 400
-
+        return jsonify({"error": "No file provided"}), 400
+        
     file = request.files['file']
-    chat_id = request.form.get('chat_id', 'default_id')
-
+    chat_id = request.form.get('chat_id', 'default')
+    
     if file.filename == '':
-        return jsonify({"error": "No selected file."}), 400
+        return jsonify({"error": "No file selected"}), 400
+        
+    try:
+        # Save file to temp directory
+        filename = secure_filename(file.filename)
+        temp_path = os.path.join(tempfile.gettempdir(), filename)
+        file.save(temp_path)
+        
+        # Store the file path for the chat session
+        document_cache[chat_id] = temp_path
+        
+        # Process the document
+        result = document_processor.process_document(temp_path)
+        if result["success"]:
+            key_info = document_processor.extract_key_information(result["content"])
+            
+            # Store processed document info for future chat messages
+            processed_documents[chat_id] = {
+                "content": result["content"],
+                "file_name": result["file_name"],
+                "pages_processed": result["pages_processed"],
+                "total_pages": result["total_pages"],
+                "extracted_info": key_info.get("extracted_info", {}),
+                "document_summary": key_info.get("document_summary", "")
+            }
+            
+            logger.info(f"Successfully processed document: {filename}, {result['pages_processed']} pages")
+            try:
+                os.remove(temp_path)
+            except Exception as e:
+                logger.error(f"Error deleting temp file: {str(e)}")
+            
+            return jsonify({
+                "success": True, 
+                "filename": filename,
+                "pages_processed": result["pages_processed"],
+                "total_pages": result["total_pages"],
+                "extracted_info": key_info.get("extracted_info", {}),
+                "document_summary": key_info.get("document_summary", "")
+            })    
+    finally:
+        # Ensure temp file is deleted even if errors occur
+        if 'temp_path' in locals():
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
-    if file and allowed_file(file.filename):
-        try:
-            # Create a temporary file to store the upload
-            temp_dir = tempfile.gettempdir()
-            filename = secure_filename(file.filename)
-            file_path = os.path.join(temp_dir, filename)
+# In message handlers:
+@socketio.on('send_message')
+def handle_send_message(msg):
+    try:
+        chat_id = msg.get("id", "default_id")
+        user_message = msg.get("msg", "")
+        
+        logger.info(f"Generating response for chat_id={chat_id}, msg='{user_message}'")
+        
+        # Check if there's a processed document for this session and build the context
+        document_context = ""
+        if chat_id in processed_documents:
+            doc_info = processed_documents[chat_id]
+            document_context = f"""
+            --- DOCUMENT ANALYSIS ---
+            Document: {doc_info['file_name']}
+            Pages Processed: {doc_info['pages_processed']} of {doc_info['total_pages']}
             
-            # Save the file temporarily
-            file.save(file_path)
+            {doc_info['document_summary']}
             
-            # Process the document
-            logger.info(f"Processing document: {filename}")
-            result = document_processor.process_document(file_path, max_pages=5)
-            
-            # Store the document path for this chat session
-            document_cache[chat_id] = file_path
-            
-            # Extract key information if processing succeeded
-            if result["success"]:
-                key_info = document_processor.extract_key_information(result["content"])
-                
-                logger.info(f"Successfully processed document: {filename}, {result['pages_processed']} pages")
-                
-                return jsonify({
-                    "success": True, 
-                    "filename": filename,
-                    "pages_processed": result["pages_processed"],
-                    "total_pages": result["total_pages"],
-                    "extracted_info": key_info.get("extracted_info", {}),
-                    "document_summary": key_info.get("document_summary", "")
-                })
-            else:
-                logger.error(f"Failed to process document: {result.get('error')}")
-                return jsonify({
-                    "success": False, 
-                    "error": result.get("error", "Failed to process document")
-                }), 400
-                
-        except Exception as e:
-            logger.error(f"Error processing document: {str(e)}")
-            return jsonify({"error": f"Error processing document: {str(e)}"}), 500
-            
-    return jsonify({"error": "File type not allowed. Only PDF, DOC, DOCX and CSV are supported."}), 400
+            Extracted Information:
+            {json.dumps(doc_info['extracted_info'], indent=2)}
+            --- END DOCUMENT ANALYSIS ---
+            """
+            logger.info(f"Using cached document information for chat_id={chat_id}")
+        
+        # Pass the pre-processed document context (if any) to ChatModel
+        result = ChatModel(user_message, document_context=document_context)
+        
+        logger.info(f"Sending response for chat_id={chat_id}")
+        emit("response", result)
+        
+    except Exception as e:
+        logger.error(f"Error in handle_send_message: {str(e)}")
+        logger.error(traceback.format_exc())
+        emit("response", {"res": {"msg": "I apologize, but I encountered an error while processing your request."}, 
+                          "error": str(e)})
 
 # Simple route for interest rates (removed /api/ prefix)
 @app.route('/interest-rates', methods=['GET'])
@@ -180,13 +221,26 @@ def handle_send_message(msg):
         
         logger.info(f"Generating response for chat_id={chat_id}, msg='{user_message}'")
         
-        # Get document path from cache if it exists
-        document_path = document_cache.get(chat_id)
+        # Check if there's a processed document for this session and build the context
+        document_context = ""
+        if chat_id in processed_documents:
+            doc_info = processed_documents[chat_id]
+            document_context = f"""
+            --- DOCUMENT ANALYSIS ---
+            Document: {doc_info['file_name']}
+            Pages Processed: {doc_info['pages_processed']} of {doc_info['total_pages']}
+            
+            {doc_info['document_summary']}
+            
+            Extracted Information:
+            {json.dumps(doc_info['extracted_info'], indent=2)}
+            --- END DOCUMENT ANALYSIS ---
+            """
+            logger.info(f"Using cached document information for chat_id={chat_id}")
         
-        # Call the ChatModel with user message and document path
-        result = ChatModel(user_message, document_path)
+        # Pass the pre-processed document context (if any) to ChatModel
+        result = ChatModel(user_message, document_context=document_context)
         
-        # Send the response to the client
         logger.info(f"Sending response for chat_id={chat_id}")
         emit("response", result)
         
@@ -194,13 +248,49 @@ def handle_send_message(msg):
         logger.error(f"Error in handle_send_message: {str(e)}")
         logger.error(traceback.format_exc())
         emit("response", {"res": {"msg": "I apologize, but I encountered an error while processing your request."}, 
-                         "error": str(e)})
+                          "error": str(e)})
 
 # Added WebSocket event handler for checking voice support
 @socketio.on('check_voice_support')
 def check_voice_support():
     # Inform clients that voice support is not available
     emit("voice_support", False)
+
+@socketio.on('chat_message')
+def handle_chat_message(data):
+    try:
+        session_id = data.get('session_id', 'default')
+        message = data.get('message', '')
+        
+        logger.info(f"Generating response for chat_id={session_id}, msg='{message}'")
+        
+        # Check if there's a processed document for this session and build the context
+        document_context = ""
+        if session_id in processed_documents:
+            doc_info = processed_documents[session_id]
+            document_context = f"""
+            --- DOCUMENT ANALYSIS ---
+            Document: {doc_info['file_name']}
+            Pages Processed: {doc_info['pages_processed']} of {doc_info['total_pages']}
+            
+            {doc_info['document_summary']}
+            
+            Extracted Information:
+            {json.dumps(doc_info['extracted_info'], indent=2)}
+            --- END DOCUMENT ANALYSIS ---
+            """
+        
+        # Pass the pre-processed document context (if any) to ChatModel
+        response = ChatModel(message, document_context=document_context)
+        
+        logger.info(f"Sending response for chat_id={session_id}")
+        emit("response", response)
+        
+    except Exception as e:
+        logger.error(f"Error in handle_chat_message: {str(e)}")
+        logger.error(traceback.format_exc())
+        emit("response", {"res": {"msg": "I apologize, but I encountered an error while processing your request."}, 
+                          "error": str(e)})
 
 @app.route('/generate-summary', methods=['OPTIONS'])
 def handle_generate_summary_options():
@@ -227,3 +317,4 @@ def add_cors_headers(response):
 
 if __name__ == '__main__':
     socketio.run(app, use_reloader=False, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+
