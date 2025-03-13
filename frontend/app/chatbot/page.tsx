@@ -1,857 +1,1467 @@
-"use client";
-import styles from "./page.module.css";
-import { useState, useEffect, useRef } from "react";
-import { Send, GraduationCap, CircleDollarSign, Scissors, Sparkles, Sun, Moon, MicOff, Mic, Heart, Info } from 'lucide-react';
-import { Button } from "@nextui-org/button";
-import { Socket, io } from "socket.io-client";
-import Markdown from "react-markdown";
-import Typewriter from "typewriter-effect";
-import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
-import PipecatWebSocketClient from "../voice/PipecatWebSocketClient";
-import Dropdown from "react-dropdown";
-import "react-dropdown/style.css";
-import { useRouter } from "next/navigation"; // Import useRouter for redirection
-//@ts-ignore
-import "react-toastify/dist/ReactToastify.css";
-import "react-dropdown/style.css";
-//@ts-ignore
-import { JsonToTable } from "react-json-to-table";
-import CollegeComparison from "./CollegeComparison";
-import CourseComparison from "./CourseComparison";
-import CourseSelectionQuiz from "./CourseSelectionQuiz";
-import { TypingIndicator } from '@/components/TypingIndicator';
-import { MobileNav } from '@/components/mobile-nav'
+"use client"
 
-function randomIntFromInterval(min: number, max: number) { // min and max included 
-  return Math.floor(Math.random() * (max - min + 1) + min);
+import React from "react"
+import { useState, useRef, useEffect } from "react"
+import { type Socket, io } from "socket.io-client"
+import { AnimatePresence, motion } from "framer-motion"
+import { useTheme } from "next-themes"
+import { toast } from "sonner"
+import ReactMarkdown from "react-markdown"
+import {
+  ArrowUpCircle,
+  FileText,
+  Download,
+  Lightbulb,
+  Mic,
+  MicOff,
+  MessageSquareText,
+  ChevronRight,
+  CircleDollarSign,
+  Calculator,
+  Upload,
+  Languages,
+  Sun,
+  Moon,
+  Menu,
+  Sparkles,
+  LayoutDashboard,
+  Clock,
+  RefreshCw,
+} from "lucide-react"
+
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Badge } from "@/components/ui/badge"
+import { TypingIndicator } from "@/components/typing-indicator"
+
+// Environment variable with fallback
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+
+// Message interface
+interface Message {
+  id: string
+  role: "user" | "assistant"
+  content: string
+  timestamp: Date
+  isLoading?: boolean
+  toolCall?: {
+    type: string
+    events: any[]
+  }
+  options?: string[]
+  dropdown_items?: string[]
+  link?: string
+  source?: string
+  similarity?: number
+  language?: string
+  original_text?: string
+  english_text?: string
 }
 
-function ChatbotPage() {
-  const [isQuizOpen, setIsQuizOpen] = useState(false);
-  const [messages, setMessages] = useState<Array<{
-    sender: string;
-    content: string;
-    toolCall: { type: string; events: any[] };
-    options: string[];
-    dropdown_items: any[];
-    link: string;
-    cutoff: Record<string, any>;
-    similarity: number | null;
-    source: string;
-  }>>([
+// Language options
+const languages = [
+  { code: "en", name: "English", voice_code: "en-IN" },
+  { code: "hi", name: "हिंदी", voice_code: "hi-IN" },
+  { code: "ta", name: "தமிழ்", voice_code: "ta-IN" },
+  { code: "te", name: "తెలుగు", voice_code: "te-IN" },
+  { code: "bn", name: "বাংলা", voice_code: "bn-IN" },
+  { code: "mr", name: "मराठी", voice_code: "mr-IN" },
+  { code: "kn", name: "ಕನ್ನಡ", voice_code: "kn-IN" },
+  { code: "ml", name: "മലയാളം", voice_code: "ml-IN" },
+  { code: "gu", name: "ગુજરાતી", voice_code: "gu-IN" },
+]
+
+// Loan info interface
+interface LoanInfo {
+  loan_type: string
+  interest_rate: string
+  eligibility: string
+  repayment_options: string
+  additional_info: string
+  result?: string
+}
+
+export default function Home() {
+  // State hooks
+  const [messages, setMessages] = useState<Message[]>([
     {
-      sender: "bot",
-      content: "Hello welcome to EduMitra, Say hello 👋 to get started ",
-      toolCall: { type: "none", events: [] },
-      options: ["hello", "engineering", "polytechnic"],
-      dropdown_items: [],
-      link: "",
-      cutoff: {},
-      similarity: null,
-      source: ""
+      id: "1",
+      role: "assistant",
+      content:
+        "Hello! I'm FinMate, your multilingual loan advisor. How can I help you today with loans, financial advice, or eligibility checks?",
+      timestamp: new Date(),
+      options: ["Check loan eligibility", "Personal loan information", "Financial tips"],
     },
-  ]);
-  const [input, setInput] = useState("");
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [currentID, setCurrentID] = useState(0);
-  const [isVoiceBotActive, setIsVoiceBotActive] = useState(false);
-  const messagesEndRef = useRef(null);
-  const [ws, setWs] = useState<Socket | null>(null);
-  const [isBotTyping, setIsBotTyping] = useState(false);
+  ])
+  const [input, setInput] = useState("")
+  const [isConnected, setIsConnected] = useState(false)
+  const [isBotTyping, setIsBotTyping] = useState(false)
+  const [language, setLanguage] = useState("en")
+  const [isVoiceMode, setIsVoiceMode] = useState(false)
+  const [documentFile, setDocumentFile] = useState<File | null>(null)
+  const [documentInfo, setDocumentInfo] = useState<any>(null)
+  const [sessionId, setSessionId] = useState("")
+  const [loanInfo, setLoanInfo] = useState<LoanInfo>({
+    loan_type: "",
+    interest_rate: "",
+    eligibility: "",
+    repayment_options: "",
+    additional_info: "",
+  })
+  const [interestRates, setInterestRates] = useState<any[]>([])
+  const [recentQueries, setRecentQueries] = useState<
+    { id: string; query: string; loan_type: string; hours_ago: number }[]
+  >([])
+  const [financialTips, setFinancialTips] = useState<string[]>([])
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
+  const [isFetchingData, setIsFetchingData] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [autoDetectLanguage, setAutoDetectLanguage] = useState(true)
+  const [debugLogs, setDebugLogs] = useState<string[]>([])
+  const [isInConversation, setIsInConversation] = useState(false)
+  const [isVoiceServerAvailable, setIsVoiceServerAvailable] = useState(false)
 
-  const [collegeInfo, setCollegeInfo] = useState({
-    name: "",
-    course: "",
-    fees: "",
-    cutoff: "",
-    scholarships: "",
-    details: "",
-  });
-  const collegeInfoRef = useRef(collegeInfo);
-  const [isConnecting, setIsConnecting] = useState(true);
-  const [isConnected, setIsConnected] = useState(false); // New state variable
-  const router = useRouter(); 
+  // Refs
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const socketRef = useRef<Socket | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const silenceDetectorRef = useRef<any>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const silenceStartRef = useRef<number | null>(null)
+  const lastAudioLevelRef = useRef<number>(0)
+  const isSpeakingRef = useRef<boolean>(false)
 
-  useEffect(() => {
-    // Generate a new session ID each time the page loads
-    const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem("sessionId", sessionId);
-  
-    // Proceed to connect WebSocket
-    collegeInfoRef.current = collegeInfo;
-    const socket = connectWebSocket();
-  
-    return () => {
-      // Clean up WebSocket connection when component is unmounted
-      if (socket) {
-        socket.disconnect();
-      }
-    };
-  }, [collegeInfo, isConnected, router]);
+  // Use theme hook
+  const { theme, setTheme } = useTheme()
+  const isDarkMode = theme === "dark"
 
-  const connectWebSocket = () => {
-    const socket = io(`${process.env.API_URL ? process.env.API_URL : "http://localhost:5000"}`, { transports: ["websocket"] });
-
-    socket.on("connect", () => {
-      console.log("Connected to server");
-      setWs(socket);
-      setIsConnecting(false);
-      if (!isConnected) {
-        toast.success("Connected to server");
-        setIsConnected(true); // Set the state to true after showing the message
-      }
-    });
-
-    socket.on("response", (data) => {
-      console.log("Received response:", data);
-      setIsBotTyping(false); // Stop the typing indicator
-      let newInfo = data.info;
-      let oldInfo = collegeInfoRef.current;
-      newInfo.name =
-        newInfo?.name !== "" &&
-        oldInfo?.name !== newInfo?.name &&
-        typeof newInfo?.name === "string"
-          ? newInfo?.name
-          : oldInfo?.name;
-      newInfo.course =
-        newInfo?.course !== "" &&
-        oldInfo?.course !== newInfo?.course &&
-        typeof newInfo?.course === "string"
-          ? newInfo?.course
-          : oldInfo?.course;
-      newInfo.fees =
-        newInfo?.fees !== "" &&
-        oldInfo?.fees !== newInfo?.fees &&
-        typeof newInfo?.fees !== undefined
-          ? newInfo?.fees
-          : oldInfo?.fees;
-      newInfo.scholarships =
-        newInfo?.scholarships !== "" &&
-        oldInfo?.scholarships !== newInfo?.scholarships &&
-        typeof newInfo?.scholarships !== undefined
-          ? newInfo?.scholarships
-          : oldInfo?.scholarships;
-      newInfo.cutoff =
-        newInfo?.cutoff !== "" &&
-        oldInfo?.cutoff !== newInfo?.cutoff &&
-        typeof newInfo?.cutoff !== undefined
-          ? newInfo?.cutoff
-          : oldInfo?.cutoff;
-      newInfo.details =
-        newInfo?.details !== "" &&
-        oldInfo?.details !== newInfo?.details &&
-        typeof newInfo?.details === "string"
-          ? newInfo?.details
-          : oldInfo?.details;
-
-      setCollegeInfo(newInfo);
-
-      setMessages((oldArray) => [
-        ...oldArray,
-        {
-          sender: "bot",
-          content: data.res.msg,
-          toolCall: data.res.toolCall,
-          options: newInfo?.options,
-          dropdown_items: newInfo?.dropdown_items,
-          link: newInfo?.link,
-          cutoff: newInfo?.cutoff ? newInfo?.cutoff : {},
-          similarity: data.res.similarity,
-          source: data.res.source
-        },
-      ]);
-    });
-
-    socket.on("voice_response", (data) => {
-      console.log("Received response:", data);
-      let newInfo = data.info;
-      let oldInfo = collegeInfoRef.current;
-      newInfo.name =
-        newInfo.name !== "" &&
-        oldInfo.name !== newInfo.name &&
-        typeof newInfo.name === "string"
-          ? newInfo.name
-          : oldInfo.name;
-      newInfo.course =
-        newInfo.course !== "" &&
-        oldInfo.course !== newInfo.course &&
-        typeof newInfo.course === "string"
-          ? newInfo.course
-          : oldInfo.course;
-      newInfo.fees =
-        newInfo.fees !== "" &&
-        oldInfo.fees !== newInfo.fees &&
-        typeof newInfo.fees !== undefined
-          ? newInfo.fees
-          : oldInfo.fees;
-      newInfo.scholarships =
-        newInfo.scholarships !== "" &&
-        oldInfo.scholarships !== newInfo.scholarships &&
-        typeof newInfo.scholarships !== undefined
-          ? newInfo.scholarships
-          : oldInfo.scholarships;
-      newInfo.cutoff =
-        newInfo.cutoff !== "" &&
-        oldInfo.cutoff !== newInfo.cutoff &&
-        typeof newInfo.cutoff !== undefined
-          ? newInfo.cutoff
-          : oldInfo.cutoff;
-      newInfo.details =
-        newInfo.details !== "" &&
-        oldInfo.details !== newInfo.details &&
-        typeof newInfo.details === "string"
-          ? newInfo.details
-          : oldInfo.details;
-
-      setCollegeInfo(newInfo);
-      setMessages((oldArray) => [
-        ...oldArray,
-        {
-          sender: "bot",
-          content: data.res.msg[0],
-          toolCall: data.res.toolCall,
-          options: [],
-          dropdown_items: [],
-          link: "",
-          cutoff: {}
-        },
-        {
-          sender: "user",
-          content: data.res.msg[1],
-          toolCall: data.res.toolCall,
-          options: [],
-          dropdown_items: [],
-          link: "",
-          cutoff: {}
-        },
-      ]);
-
-      // Update maxTickets if available in the response
-      if (data.res.toolCall && data.res.toolCall.available_tickets) {
-      }
-    });
-
-    socket.on("connect_error", (error) => {
-      console.error("Connection error:", error);
-      setIsConnecting(false);
-      toast.error("Failed to connect. Retrying in 5 seconds...");
-      setTimeout(connectWebSocket, 5000);
-    });
-
-    return socket;
-  };
-
-  useEffect(() => {
-    const socket = connectWebSocket();
-
-    return () => {
-      socket.off("connect");
-      socket.off("response");
-      socket.off("connect_error");
-      socket.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    //@ts-ignore
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const scrollToBottom = () => {
-    //@ts-ignore
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-  useEffect(scrollToBottom, [messages]);
-  const handleSend = () => {
-    if (input.trim()) {
-      if (ws && ws.connected) {
-        sendMsg(input);
-      } else {
-        toast.error("Not connected to server. Please wait...");
-        connectWebSocket();
-      }
-    }
-  };
-  const loadScript = (src: any) => {
-    return new Promise((resolve) => {
-      const script = document.createElement("script");
-
-      script.src = src;
-
-      script.onload = () => {
-        resolve(true);
-      };
-      script.onerror = () => {
-        resolve(false);
-      };
-
-      document.body.appendChild(script);
-    });
-  };
-  const sendMsg = (ms: string) => {
-    if (ws && ws.connected) {
-      setIsBotTyping(true); // Start the typing indicator
-      console.log(messages)
-      if (currentID == 0) setCurrentID(randomIntFromInterval(1, 1000))
-      ws.emit("send_message", { msg: ms, id: currentID, messages });
-      setMessages((oldArray) => [
-        ...oldArray,
-        {
-          sender: "user",
-          content: ms,
-          toolCall: { type: "none", events: [] },
-          options: [],
-          dropdown_items: [],
-          link: "",
-          cutoff: {}
-        },
-      ]);
-      setInput("");
-    } else {
-      console.error("WebSocket is not connected");
-      setMessages((oldArray) => [
-        ...oldArray,
-        {
-          sender: "bot",
-          content: "Sorry, I'm having trouble connecting. Please try again in a moment.",
-          toolCall: { type: "none", events: [] },
-          options: [],
-          dropdown_items: [],
-          link: "",
-          cutoff: {}
-        },
-      ]);
-    }
-  };
-  const [isComparisonOpen, setIsComparisonOpen] = useState(false);
-  const handleOpenComparison = () => {
-    setIsComparisonOpen(true);
-  };
-
-  const handleCloseComparison = () => {
-    setIsComparisonOpen(false);
+  // Debug logger
+  const addLog = (message: string) => {
+    setDebugLogs((prev) => [...prev, `${new Date().toISOString().slice(11, 19)}: ${message}`])
+    console.log(message)
   }
-  const [isCollegeComparisonOpen, setIsCollegeComparisonOpen] = useState(false);
-  
 
-  const handleOpenCollegeComparison = () => {
-    setIsCollegeComparisonOpen(true);
-  };
+  // Connect to websocket on component mount
+  useEffect(() => {
+    // Generate a session ID
+    const newSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+    setSessionId(newSessionId)
 
-  const handleCloseCollegeComparison = () => {
-    setIsCollegeComparisonOpen(false);
-  };
-  const handleOpenQuiz = () => setIsQuizOpen(true);
-  const handleCloseQuiz = () => setIsQuizOpen(false);
-  const downloadSummary = async () => {
+    // Connect to WebSocket
+    console.log(`Connecting to server at: ${API_URL}`)
+
     try {
-      // Format messages for summary generation
-      const formattedMessages = messages.map(message => ({
-        user: message.sender === 'user' ? message.content : '',
-        bot: message.sender === 'bot' ? message.content : ''
-      })).filter(msg => msg.user || msg.bot);
-  
-      const response = await fetch(`${process.env.API_URL ? process.env.API_URL : "http://localhost:5000"}/generate-summary`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          conversation: formattedMessages
-        }),
-      });
-  
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-  
-      const data = await response.json();
-  
-      // Download the summary as PDF
-      const downloadResponse = await fetch(`${process.env.API_URL ? process.env.API_URL : "http://localhost:5000"}/download-summary`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          summary: data.summary
-        }),
-      });
-  
-      if (!downloadResponse.ok) {
-        throw new Error(`HTTP error! status: ${downloadResponse.status}`);
-      }
-  
-      const blob = await downloadResponse.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = "edumitra_conversation_summary.pdf";
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      a.remove();
-  
-      toast.success("Summary downloaded successfully!");
+      const socket = io(API_URL, {
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionAttempts: 5,
+      })
+
+      socket.on("connect", () => {
+        console.log("Connected to server")
+        setIsConnected(true)
+        socketRef.current = socket
+        toast.success("Connected to FinMate advisor")
+
+        // Check if voice API is supported
+        socket.emit("check_voice_support")
+      })
+
+      socket.on("voice_support", (supported) => {
+        setIsVoiceServerAvailable(!!supported)
+        console.log(`Voice support: ${supported ? "Available" : "Unavailable"}`)
+      })
+
+      socket.on("disconnect", () => {
+        console.log("Disconnected from server")
+        setIsConnected(false)
+        toast.error("Disconnected from server. Trying to reconnect...")
+      })
+
+      socket.on("connect_error", (error) => {
+        console.error("Connection error:", error)
+        setIsConnected(false)
+        toast.error("Connection error. Trying to reconnect...")
+      })
+
+      socket.on("response", handleSocketResponse)
+
+      socketRef.current = socket
     } catch (error) {
-      console.error("Error downloading summary:", error);
-      toast.error("Failed to download summary.");
+      console.error("Error connecting to WebSocket:", error)
+      toast.error("Failed to connect to server")
     }
-  };
-  const toggleTheme = () => {
-    setIsDarkMode(!isDarkMode);
-  };
 
-  const toggleVoiceBot = () => {
-    setIsVoiceBotActive(!isVoiceBotActive);
-  };
+    // Fetch sidebar data
+    fetchSidebarData()
 
-  const options = ["one", "two", "three"];
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect()
+      }
+    }
+  }, [])
 
-  const RankTable = ({ data }: { data: any }) => {
-    return (
-      <table border={1} >
-        <thead>
-          <tr>
-            <th className={`${isDarkMode?'bg-inherit':'text-black'}`}>Department</th>
-            <th className={`${isDarkMode?'bg-inherit':'text-black'}`}>Year</th>
-            <th className={`${isDarkMode?'bg-inherit':'text-black'}`}>Category</th>
-            <th className={`${isDarkMode?'bg-inherit':'text-black'}`}>Opening Rank</th>
-            <th className={`${isDarkMode?'bg-inherit':'text-black'}`}>Closing Rank</th>
-          </tr>
-        </thead>
-        <tbody>
-          {Object?.keys(data)?.map((department) =>
-            Object?.keys(data[department])?.map((year) =>
-              Object?.keys(data[department][year])?.map((category) => (
-                <tr key={`${department}-${year}-${category}`}>
-                  <td>{department}</td>
-                  <td>{year}</td>
-                  <td>{category}</td>
-                  <td>{data[department][year][category][0]}</td>
-                  <td>{data[department][year][category][1]}</td>
-                </tr>
-              ))
-            )
-          )}
-        </tbody>
-      </table>
-    );
-  };
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  // Handle audio playback
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.onplay = () => {
+        setIsPlaying(true)
+        // Stop recording while the AI is speaking
+        if (isRecording) {
+          stopVoiceChat()
+        }
+      }
+
+      audioRef.current.onended = () => {
+        setIsPlaying(false)
+
+        // Auto-restart voice chat if we're in conversation mode
+        if (isInConversation && isVoiceMode) {
+          addLog("AI finished speaking, auto-reactivating microphone")
+          setTimeout(() => {
+            startVoiceChat()
+          }, 500)
+        }
+      }
+    }
+
+    return () => {
+      stopVoiceChat()
+    }
+  }, [isInConversation, isVoiceMode])
+
+  // Handle Socket.io response
+  const handleSocketResponse = (data: any) => {
+    console.log("Received response:", data)
+    setIsBotTyping(false)
+
+    // Add the assistant's message to the chat
+    if (data.text || (data.res && data.res.msg)) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `bot-${Date.now()}`,
+          role: "assistant",
+          content: data.text || (data.res && data.res.msg) || "I couldn't process that request",
+          timestamp: new Date(data.timestamp || Date.now()),
+          language: data.language,
+          original_text: data.original_text,
+          english_text: data.english_text,
+          toolCall: data.res?.toolCall,
+          options: data.info?.options || [],
+          dropdown_items: data.info?.dropdown_items || [],
+          link: data.info?.link || "",
+          source: data.res?.source || "",
+          similarity: data.res?.similarity || null,
+        },
+      ])
+    }
+
+    // Play the audio response if available
+    if (data.audio && audioRef.current) {
+      const audio = audioRef.current
+      audio.src = `data:audio/wav;base64,${data.audio}`
+      audio.play()
+      setIsPlaying(true)
+    }
+
+    // Update loan information if available
+    if (data.info) {
+      const newLoanInfo = {
+        loan_type: data.info.loan_type || loanInfo.loan_type,
+        interest_rate: data.info.interest_rate || loanInfo.interest_rate,
+        eligibility: data.info.eligibility || loanInfo.eligibility,
+        repayment_options: data.info.repayment_options || loanInfo.repayment_options,
+        additional_info: data.info.additional_info || loanInfo.additional_info,
+        result: data.info.result || loanInfo.result,
+      }
+      setLoanInfo(newLoanInfo)
+    }
+  }
+
+  // Fetch sidebar data
+  const fetchSidebarData = async () => {
+    setIsFetchingData(true)
+    try {
+      // Fetch interest rates
+      const ratesResponse = await fetch(`${API_URL}/interest-rates`)
+      if (ratesResponse.ok) {
+        const ratesData = await ratesResponse.json()
+        setInterestRates(ratesData)
+      }
+
+      // Fetch recent queries
+      const queriesResponse = await fetch(`${API_URL}/recent-queries`)
+      if (queriesResponse.ok) {
+        const queriesData = await queriesResponse.json()
+        setRecentQueries(queriesData)
+      }
+
+      // Fetch financial tips
+      const tipsResponse = await fetch(`${API_URL}/financial-tips`)
+      if (tipsResponse.ok) {
+        const tipsData = await tipsResponse.json()
+        setFinancialTips(tipsData)
+      }
+    } catch (error) {
+      console.error("Error fetching sidebar data:", error)
+    } finally {
+      setIsFetchingData(false)
+    }
+  }
+
+  // Scroll to bottom of messages container
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  // Send message to server
+  const sendMessage = (message: string) => {
+    if (!message.trim()) return
+
+    if (!socketRef.current || !isConnected) {
+      toast.error("Not connected to server. Please wait...")
+      return
+    }
+
+    // Add user message to state
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: message,
+      timestamp: new Date(),
+      language: language,
+    }
+
+    setMessages((prev) => [...prev, userMessage])
+    setInput("")
+    setIsBotTyping(true)
+
+    // Send message to server
+    socketRef.current.emit("send_message", {
+      msg: message,
+      id: sessionId,
+      language: autoDetectLanguage ? "auto" : language,
+      auto_detect: autoDetectLanguage,
+    })
+  }
+
+  // Handle file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setDocumentFile(file)
+
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("chat_id", sessionId)
+
+    try {
+      setIsFetchingData(true)
+      const response = await fetch(`${API_URL}/upload-document`, {
+        method: "POST",
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setDocumentInfo(data)
+        toast.success(`Document processed: ${file.name}`)
+
+        // Add a message about the document
+        const content = `I've analyzed your document: ${file.name}. ${data.document_summary || ""}`
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `doc-${Date.now()}`,
+            role: "assistant",
+            content,
+            timestamp: new Date(),
+          },
+        ])
+      } else {
+        toast.error(`Failed to process document: ${data.error}`)
+      }
+    } catch (error) {
+      console.error("Error uploading document:", error)
+      toast.error("Error uploading document")
+    } finally {
+      setIsFetchingData(false)
+    }
+  }
+
+  // Download conversation summary
+  const downloadSummary = async () => {
+    if (messages.length < 2) {
+      toast.error("Not enough conversation to generate a summary")
+      return
+    }
+
+    try {
+      setIsFetchingData(true)
+
+      // Format messages for summary generation
+      const formattedMessages = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((message) => ({
+          user: message.role === "user" ? message.content : "",
+          bot: message.role === "assistant" ? message.content : "",
+        }))
+        .filter((msg) => msg.user || msg.bot)
+
+      // Generate summary
+      const response = await fetch(`${API_URL}/generate-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation: formattedMessages }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      // Download summary as PDF
+      const downloadResponse = await fetch(`${API_URL}/download-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: data.summary }),
+      })
+
+      if (!downloadResponse.ok) {
+        throw new Error(`HTTP error! status: ${downloadResponse.status}`)
+      }
+
+      // Create download link
+      const blob = await downloadResponse.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `FinMate_Summary_${new Date().toISOString().split("T")[0]}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      a.remove()
+
+      toast.success("Summary downloaded successfully")
+    } catch (error) {
+      console.error("Error downloading summary:", error)
+      toast.error("Failed to download summary")
+    } finally {
+      setIsFetchingData(false)
+    }
+  }
+
+  // Toggle voice mode
+  const handleToggleVoiceMode = () => {
+    if (isVoiceMode) {
+      stopVoiceChat()
+      setIsInConversation(false)
+    } else {
+      // Try to start voice chat, but handle failure gracefully
+      try {
+        startVoiceChat()
+        setIsInConversation(true)
+        toast.success("Voice mode activated")
+      } catch (err) {
+        console.error("Failed to start voice mode:", err)
+        toast.error("Voice mode unavailable - please try again later")
+        setIsVoiceMode(false)
+        return
+      }
+    }
+    setIsVoiceMode(!isVoiceMode)
+  }
+
+  // Start voice chat
+  const startVoiceChat = async () => {
+    try {
+      // Check if browser supports getUserMedia
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Your browser doesn't support voice recording")
+      }
+
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+
+      // Set up audio context for analyzing audio levels
+      const audioContext = new AudioContext()
+      audioContextRef.current = audioContext
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      const bufferLength = analyser.frequencyBinCount
+      const dataArray = new Uint8Array(bufferLength)
+
+      // Connect stream to analyser
+      const source = audioContext.createMediaStreamSource(stream)
+      source.connect(analyser)
+
+      // Start the media recorder
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+
+      // Reset audio chunks
+      audioChunksRef.current = []
+
+      // Set up media recorder event handlers
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      // Start recorder
+      mediaRecorder.start(100) // Collect data in 100ms chunks
+      setIsRecording(true)
+      addLog("Started voice recording")
+
+      // Start silence detection
+      startSilenceDetection(analyser, dataArray)
+    } catch (error) {
+      addLog(`Error starting voice chat: ${error}`)
+      toast.error(`Could not access microphone: ${error}`)
+      throw error // Rethrow to allow caller to handle it
+    }
+  }
+
+  // Start silence detection
+  const startSilenceDetection = (analyser: AnalyserNode, dataArray: Uint8Array) => {
+    // Clear any existing detector
+    if (silenceDetectorRef.current) {
+      clearInterval(silenceDetectorRef.current)
+    }
+
+    // Initialize silence timer
+    silenceStartRef.current = null
+
+    // Start detecting silence
+    silenceDetectorRef.current = setInterval(() => {
+      // Get current audio data
+      analyser.getByteFrequencyData(dataArray)
+
+      // Calculate average volume
+      let sum = 0
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i]
+      }
+      const averageVolume = sum / dataArray.length
+      lastAudioLevelRef.current = averageVolume
+
+      // Detect if user is speaking (adjust threshold as needed)
+      const isSpeaking = averageVolume > 15 // Adjust threshold based on testing
+
+      // Display speaking state on UI for debugging
+      if (isSpeaking !== isSpeakingRef.current) {
+        isSpeakingRef.current = isSpeaking
+        setIsSpeaking(isSpeaking)
+        addLog(`User ${isSpeaking ? "started" : "stopped"} speaking. Audio level: ${averageVolume.toFixed(2)}`)
+      }
+
+      // If not speaking, check for extended silence
+      if (!isSpeaking) {
+        if (silenceStartRef.current === null) {
+          silenceStartRef.current = Date.now()
+        } else {
+          const silenceDuration = Date.now() - silenceStartRef.current
+
+          // If silent for 3 seconds, process the audio
+          if (silenceDuration >= 3000 && audioChunksRef.current.length > 0) {
+            addLog(`3 seconds of silence detected - processing audio`)
+            processRecordedAudio()
+          }
+        }
+      } else {
+        // Reset silence timer if user is speaking
+        silenceStartRef.current = null
+      }
+    }, 200) // Check every 200ms
+  }
+
+  // Process recorded audio
+  const processRecordedAudio = async () => {
+    if (!mediaRecorderRef.current || audioChunksRef.current.length === 0) return
+
+    // Stop the recorder
+    const mediaRecorder = mediaRecorderRef.current
+    if (mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop()
+    }
+
+    // Stop silence detection
+    if (silenceDetectorRef.current) {
+      clearInterval(silenceDetectorRef.current)
+    }
+
+    // Create blob from audio chunks
+    const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" })
+
+    // Add a processing message
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: "Processing your voice message...",
+        timestamp: new Date(),
+      },
+    ])
+
+    // Convert to base64
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      if (event.target && event.target.result) {
+        // Get base64 audio
+        const base64Audio = (event.target.result as string).split(",")[1]
+
+        // Send to server
+        if (socketRef.current && socketRef.current.connected) {
+          addLog(`Sending audio to server - length: ${base64Audio.length}`)
+
+          // Update the processing message
+          setMessages((prev) => {
+            const newMessages = [...prev]
+            if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === "user") {
+              newMessages[newMessages.length - 1].content = "Sending your voice message..."
+            }
+            return newMessages
+          })
+
+          socketRef.current.emit("audio_message", {
+            audio: base64Audio,
+            language: autoDetectLanguage ? "auto" : language,
+            auto_detect: autoDetectLanguage,
+            id: sessionId,
+          })
+
+          // Reset for next recording
+          audioChunksRef.current = []
+          setIsRecording(false)
+        }
+      }
+    }
+    reader.readAsDataURL(audioBlob)
+  }
+
+  // Stop voice chat
+  const stopVoiceChat = () => {
+    // Stop media recorder
+    if (mediaRecorderRef.current) {
+      if (mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop()
+      }
+
+      // Stop all tracks in the stream
+      if (mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
+      }
+    }
+
+    // Stop silence detection
+    if (silenceDetectorRef.current) {
+      clearInterval(silenceDetectorRef.current)
+    }
+
+    // Close audio context
+    if (audioContextRef.current) {
+      audioContextRef.current.close()
+    }
+
+    setIsRecording(false)
+    addLog("Voice chat stopped")
+  }
+
+  // Handle option click
+  const handleOptionClick = (option: string) => {
+    sendMessage(option)
+  }
+
+  // Format time
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  }
+
+  // Handle keyboard submission
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage(input)
+    }
+  }
 
   return (
-    <div
-      className={`flex h-screen w-full ${
-        isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-900"
-      } transition-colors duration-500`}
-    >
-      <div className="flex flex-col w-full max-w-screen-2xl mx-auto p-4 lg:p-6 h-full">
-        <div
-          className={`flex items-center justify-between p-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-t-xl`}
-        >
-          <div className="flex items-center">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white text-purple-600 flex items-center justify-center font-bold text-lg sm:text-xl mr-2 sm:mr-3">
-              EM
+    <div className="flex flex-col h-screen">
+      {/* Header */}
+      <header className="bg-gradient-to-r from-indigo-600 to-purple-600 shadow-md p-3 md:p-4">
+        <div className="container max-w-7xl mx-auto flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-white bg-opacity-20">
+              <CircleDollarSign className="h-6 w-6 text-white" />
             </div>
             <div>
-              <h2 className="text-lg sm:text-xl font-bold text-white">EduMitra</h2>
-              <p className="text-xs sm:text-sm text-white opacity-75 flex items-center">
-                <span className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></span>
-                {ws && ws.connected ? "Connected" : "Disconnected"}
-              </p>
+              <h1 className="text-lg md:text-xl font-bold text-white">FinMate</h1>
+              <div className="flex items-center">
+                <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-400" : "bg-red-400"} mr-2`}></div>
+                <p className="text-xs text-white">{isConnected ? "Connected" : "Disconnecting..."}</p>
+              </div>
             </div>
           </div>
-          <div className="flex items-center space-x-1 sm:space-x-2">
-            <Button
-              onClick={toggleVoiceBot}
-              className="p-1 sm:p-2 rounded-full bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors duration-200 text-white"
-              aria-label={
-                isVoiceBotActive ? "Deactivate voice bot" : "Activate voice bot"
-              }
-            >
-              {isVoiceBotActive ? <Mic size={16} /> : <MicOff size={16} />}
-            </Button>
-            <Button
-              onClick={toggleTheme}
-              className="p-1 sm:p-2 rounded-full bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors duration-200 text-white"
-              aria-label={
-                isDarkMode ? "Switch to light mode" : "Switch to dark mode"
-              }
-            >
-              {isDarkMode ? <Sun size={16} /> : <Moon size={16} />}
-            </Button>
-          </div>
-        </div>
-        <div
-          className={`flex flex-1 ${
-            isDarkMode ? "bg-gray-800" : "bg-white"
-          } rounded-b-xl overflow-hidden transition-colors duration-500`}
-        >
-          <div className="flex flex-col w-full lg:w-2/3 border-r border-gray-200 dark:border-gray-700 h-[calc(100vh-8rem)]">
-            {isVoiceBotActive ? (
-              <div className="flex-1 overflow-auto p-4">
-                <PipecatWebSocketClient
-                  setCall={() => setIsVoiceBotActive(false)}
-                  isDarkMode={isDarkMode}
-                />
-              </div>
-            ) : (
-              <>
-                <div className="flex-1 overflow-auto p-4 space-y-4 mb-14 lg:mb-0">
-                  {messages.map((message, index) => (
-                    <div
-                    key={index}
-                    className={`flex ${
-                      message.sender === "user" ? "justify-end" : "justify-start"
-                    }`}
+
+          <div className="flex items-center space-x-2">
+            {/* Language selector */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="text-white hover:bg-white hover:bg-opacity-10">
+                  <Languages className="h-5 w-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Select Language</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setAutoDetectLanguage(true)}
+                  className={autoDetectLanguage ? "bg-muted" : ""}
+                >
+                  Auto-detect language
+                  {autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {languages.map((lang) => (
+                  <DropdownMenuItem
+                    key={lang.code}
+                    onClick={() => {
+                      setLanguage(lang.code)
+                      setAutoDetectLanguage(false)
+                    }}
+                    className={language === lang.code && !autoDetectLanguage ? "bg-muted" : ""}
                   >
-                      <div
-                        className={`max-w-xs lg:max-w-md xl:max-w-lg rounded-lg p-3 relative ${
-                          message.sender === "user"
-                            ? "bg-purple-600 text-white"
-                            : isDarkMode
-                            ? "bg-gray-700 text-white"
-                            : "bg-gray-200 text-gray-900"
-                        }`}
-                      >
-                        {message.sender === "bot" && (
-                          <div className="absolute top-2 right-2">
-                            <div className="group relative">
-                              <Info size={16} className="text-gray-400 cursor-pointer" />
-                              <div className="absolute right-0 w-48 p-2 mt-2 text-sm bg-white rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity duration-300">
-                                <p>Similarity: {typeof message.similarity === 'number' ? message.similarity.toFixed(2) : 'N/A'}</p>
-                                <p>Source: {message.source || 'N/A'}</p>
+                    {lang.name}
+                    {language === lang.code && !autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Theme toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="text-white hover:bg-white hover:bg-opacity-10"
+            >
+              {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </Button>
+
+            {/* Voice mode toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleToggleVoiceMode}
+              disabled={!isVoiceServerAvailable}
+              title={isVoiceServerAvailable ? "Toggle voice mode" : "Voice mode unavailable"}
+              className="text-white hover:bg-white hover:bg-opacity-10"
+            >
+              {isVoiceMode ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+            </Button>
+
+            {/* Mobile drawer trigger */}
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="text-white hover:bg-white hover:bg-opacity-10 md:hidden">
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-[80vw]">
+                <div className="h-full flex flex-col pb-8">
+                  <h2 className="text-lg font-semibold py-4">Financial Information</h2>
+
+                  <Tabs defaultValue="info" className="flex-1">
+                    <TabsList className="grid grid-cols-3 mb-4">
+                      <TabsTrigger value="info">Loan Info</TabsTrigger>
+                      <TabsTrigger value="rates">Rates</TabsTrigger>
+                      <TabsTrigger value="tips">Tips</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="info" className="space-y-4 overflow-auto">
+                      {loanInfo.loan_type ? (
+                        <div className="space-y-4">
+                          <Card>
+                            <CardHeader className="py-2">
+                              <CardTitle>Loan Type</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <p>{loanInfo.loan_type}</p>
+                            </CardContent>
+                          </Card>
+
+                          {loanInfo.interest_rate && (
+                            <Card>
+                              <CardHeader className="py-2">
+                                <CardTitle>Interest Rate</CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <p>{loanInfo.interest_rate}</p>
+                              </CardContent>
+                            </Card>
+                          )}
+
+                          {loanInfo.eligibility && (
+                            <Card>
+                              <CardHeader className="py-2">
+                                <CardTitle>Eligibility</CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
+                              </CardContent>
+                            </Card>
+                          )}
+
+                          {loanInfo.repayment_options && (
+                            <Card>
+                              <CardHeader className="py-2">
+                                <CardTitle>Repayment Options</CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
+                              </CardContent>
+                            </Card>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <MessageSquareText className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                          <p>No loan information available yet</p>
+                          <p className="text-sm">Ask about specific loans to see details here</p>
+                        </div>
+                      )}
+                    </TabsContent>
+
+                    <TabsContent value="rates" className="overflow-auto">
+                      <div className="space-y-4">
+                        {interestRates.length > 0 ? (
+                          interestRates.map((rate, index) => (
+                            <Card key={index}>
+                              <CardHeader className="py-2">
+                                <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
+                              </CardHeader>
+                              <CardContent className="pb-4">
+                                <div className="flex justify-between items-center mb-2">
+                                  <span>Min</span>
+                                  <span>Max</span>
+                                </div>
+                                <div className="relative h-7 w-full bg-muted rounded-lg">
+                                  <div
+                                    className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
+                                    style={{ width: "100%" }}
+                                  ></div>
+                                  <div className="absolute inset-0 flex justify-between items-center px-2">
+                                    <Badge variant="secondary">{rate.min_rate}%</Badge>
+                                    <Badge variant="secondary">{rate.max_rate}%</Badge>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            {isFetchingData ? (
+                              <div className="flex flex-col items-center">
+                                <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                                <p>Fetching interest rates...</p>
                               </div>
-                            </div>
+                            ) : (
+                              <>
+                                <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                                <p>Interest rate data unavailable</p>
+                              </>
+                            )}
                           </div>
                         )}
-                        {message?.cutoff && Object.keys(message?.cutoff).length !== 0 ? (
-                          <div>
-                            <h2>Engineering Admission Ranks</h2>
-                            <RankTable data={message?.cutoff} />
-                          </div>
-                        ) : null}
-                        {message.dropdown_items &&
-                        message.dropdown_items.length != 0 ? (
-                          <div>
-                            <Markdown>{message.content}</Markdown>
-                            <div className="mt-2">
-                              <Dropdown
-                                options={message.dropdown_items.map(
-                                  (option: any) => option
-                                )}
-                                onChange={(e) => sendMsg(e.value)}
-                                value={
-                                  message.dropdown_items.map(
-                                    (option: any) => option
-                                  )[0]
-                                }
-                                placeholder="Select a college"
-                              />
-                            </div>
-                          </div>
-                        ) : <Markdown>{message.content}</Markdown>}
-                        <div>
-                          {message.toolCall.type !== "college_list"
-                            ? message?.options?.map((option) => (
-                              <Button
-                                key={option}
-                                onClick={() => sendMsg(option)}
-                                className={`${styles["custom-button"]} inline-flex items-center px-4 py-3 text-sm font-medium text-left whitespace-normal break-words mr-2 mb-2 w-full md:w-auto h-`}
-                              >
-                                {option}
-                              </Button>
-                            ))
-                            : null}
-                        </div>
-                        {message?.link && message?.link !== "" ? (
-                          <Button
-                            key={message?.link}
-                            onClick={() => window.open(message?.link, "_blank", "noopener,noreferrer")}
-                            className={`${styles["custom-button"]} inline-flex items-center px-4 py-3 text-sm font-medium text-left whitespace-normal break-words mr-2 mb-2 w-full md:w-auto h-`}
-                            style={{ backgroundColor: "#333", color: "#fff", display: "flex" }}
-                          >
-                            Link to official Website
-                            <span className="ml-2">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" className="lucide lucide-external-link"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-                            </span>
-                          </Button>
-                        ) : null}
+                      </div>
+                    </TabsContent>
 
+                    <TabsContent value="tips" className="overflow-auto">
+                      <div className="space-y-4">
+                        {financialTips.length > 0 ? (
+                          financialTips.map((tip, index) => (
+                            <Card key={index}>
+                              <CardContent className="pt-6">
+                                <div className="flex">
+                                  <div className="mr-4 mt-0.5">
+                                    <Lightbulb className="h-5 w-5 text-yellow-500" />
+                                  </div>
+                                  <p>{tip}</p>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            {isFetchingData ? (
+                              <div className="flex flex-col items-center">
+                                <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                                <p>Loading financial tips...</p>
+                              </div>
+                            ) : (
+                              <>
+                                <Lightbulb className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                                <p>No financial tips available</p>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
-                  {isBotTyping && (
-                    <div className="flex justify-start">
-                      <div className={`max-w-xs lg:max-w-md xl:max-w-lg rounded-lg p-3 ${
-                        isDarkMode ? "bg-gray-700 text-white" : "bg-gray-200 text-gray-900"
-                      }`}>
-                        <TypingIndicator isVisible={true} />
-                      </div>
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-                <div className="fixed lg:relative bottom-14 lg:bottom-0 left-0 right-0 lg:left-auto lg:right-auto p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-                  <div className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <input
-                      type="text"
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const g = handleSend();
-                        }
-                      }}
-                      placeholder={
-                        isConnecting ? "Connecting..." : "Type a message..."
-                      }
-                      className={`flex-grow p-3 bg-transparent focus:outline-none ${
-                        isDarkMode
-                          ? "text-black placeholder-gray-400"
-                          : "text-gray-900 placeholder-gray-500"
-                      }`}
-                      disabled={isConnecting}
-                    />
+                    </TabsContent>
+                  </Tabs>
+
+                  <div className="mt-6 space-y-3">
                     <Button
-                      onClick={handleSend}
-                      className={`p-3 ${
-                        isConnecting
-                          ? "text-gray-400 cursor-not-allowed"
-                          : "text-purple-600 hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300"
-                      }`}
-                      disabled={isConnecting}
+                      onClick={() => {
+                        fileInputRef.current?.click()
+                      }}
+                      className="w-full"
+                      variant="outline"
                     >
-                      <Send size={20} />
+                      <Upload className="mr-2 h-4 w-4" /> Upload Document
                     </Button>
+
+                    <Button onClick={downloadSummary} className="w-full" variant="outline">
+                      <Download className="mr-2 h-4 w-4" /> Download Summary
+                    </Button>
+
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileUpload}
+                      accept=".pdf,.doc,.docx,.csv"
+                      className="hidden"
+                    />
                   </div>
                 </div>
-              </>
-            )}
+              </SheetContent>
+            </Sheet>
           </div>
-          {/* Desktop Sidebar - Hidden on Mobile */}
-          <div className="hidden lg:block lg:w-1/3 p-4 overflow-auto">
-            <h3 className="text-xl font-bold mb-4 flex items-center">
-              <Sparkles className="mr-2 text-yellow-500" /> Information
-            </h3>
-            <div className="space-y-4">
-              <div
-                className={`p-3 rounded-lg ${
-                  isDarkMode ? "bg-gray-700" : "bg-gray-200"
-                }`}
-              >
-                <div className="flex items-center mb-2">
-                  <img
-                    src="/placeholder.svg?height=40&width=40"
-                    alt="User Avatar"
-                    className="w-10 h-10 rounded-full mr-3"
-                  />
-                  <span className="font-semibold">
-                    {collegeInfo.name ? (
-                      <Typewriter
-                        options={{
-                          strings: collegeInfo.name,
-                          autoStart: true,
-                          loop: false,
-                        }}
-                      />
-                    ) : (
-                      "College Name"
-                    )}
-                  </span>
-                </div>
-              </div>
-              <div
-                className={`p-3 rounded-lg ${
-                  isDarkMode ? "bg-gray-700" : "bg-gray-200"
-                }`}
-              >
-                <h4 className="font-semibold mb-2 flex items-center">
-                  <GraduationCap size={25} className="mr-2 text-green-500" />{" "}
-                  Course
-                </h4>
-                <p>
-                  {collegeInfo.course ? (
-                    <Typewriter
-                      options={{
-                        strings: collegeInfo.course,
-                        autoStart: true,
-                        loop: false,
-                      }}
-                    />
-                  ) : (
-                    "Not selected"
-                  )}
-                </p>
-              </div>
-              <div
-                className={`p-3 rounded-lg ${
-                  isDarkMode ? "bg-gray-700" : "bg-gray-200"
-                }`}
-              >
-                <h4 className="font-semibold mb-2 flex items-center">
-                  <CircleDollarSign
-                    size={25}
-                    className="mr-2 text-yellow-500"
-                  />{" "}
-                  Fees
-                </h4>
-                <p>
-                  {collegeInfo.fees && collegeInfo.fees != "0" ? (
-                    <Typewriter
-                      options={{
-                        strings: collegeInfo.fees.toString(),
-                        autoStart: true,
-                        loop: false,
-                      }}
-                    />
-                  ) : (
-                    "Not selected"
-                  )}
-                </p>
-              </div>
-              <div
-                className={`p-3 rounded-lg ${
-                  isDarkMode ? "bg-gray-700" : "bg-gray-200"
-                }`}
-              >
-                <div
-                  className={`p-0 rounded-lg ${
-                    isDarkMode ? "bg-gray-700" : "bg-gray-200"
-                  }`}
-                >
-                  <h4 className="font-semibold mb-2 flex items-center">
-                    <Scissors size={25} className="mr-2 text-red-500" /> Cutoff
-                  </h4>
+        </div>
+      </header>
 
-                  {collegeInfo.cutoff &&
-                  typeof collegeInfo.cutoff === "object" &&
-                  Object.keys(collegeInfo.cutoff).length > 0 ? (
-                    <div>
-                      {Object.entries(collegeInfo.cutoff).map(
-                        ([department, years]) => (
-                          <div key={department}>
-                            {Object.entries(years as Record<string, any>).map(([year, categories]) => (
-                              <div key={year}>
-                                {categories.General && (
-                                  <div>
-                                    <p>{`${department}: ${categories.General[1]}`}</p>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
+      {/* Main content area */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Chat messages area */}
+        <div className="flex-1 flex flex-col h-full">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
+            <AnimatePresence initial={false}>
+              {messages.map((message) => (
+                <motion.div
+                  key={message.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`relative max-w-[85%] md:max-w-[70%] rounded-lg p-3 ${
+                      message.role === "user" ? "bg-indigo-600 text-white" : "bg-muted/70"
+                    }`}
+                  >
+                    <div className="flex flex-col">
+                      <div className="px-1">
+                        <ReactMarkdown className="prose dark:prose-invert prose-sm max-w-none break-words">
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+
+                      {message.options && message.options.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {message.options.map((option) => (
+                            <Button
+                              key={option}
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleOptionClick(option)}
+                              className="text-xs"
+                            >
+                              {option}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+
+                      {message.link && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-2 text-xs w-fit"
+                          onClick={() => window.open(message.link, "_blank", "noopener,noreferrer")}
+                        >
+                          <FileText className="mr-2 h-3 w-3" />
+                          View Official Document
+                        </Button>
+                      )}
+
+                      <div className="text-xs opacity-60 mt-1 text-right">{formatTime(message.timestamp)}</div>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+
+            {isBotTyping && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex justify-start">
+                <div className="max-w-[85%] md:max-w-[70%] rounded-lg p-4 bg-muted/70">
+                  <TypingIndicator />
+                </div>
+              </motion.div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input area */}
+          <div className="p-4 border-t">
+            <div className="flex items-center space-x-2 max-w-4xl mx-auto">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => {
+                  fileInputRef.current?.click()
+                }}
+                title="Upload document"
+              >
+                <Upload className="h-4 w-4" />
+              </Button>
+
+              <div className="relative flex-1">
+                <Input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isConnected ? "Type your message..." : "Connecting..."}
+                  disabled={!isConnected}
+                  className="pr-10"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full"
+                  disabled={!isConnected || !input.trim()}
+                  onClick={() => sendMessage(input)}
+                >
+                  <ArrowUpCircle className="h-5 w-5" />
+                </Button>
+              </div>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept=".pdf,.doc,.docx,.csv"
+                className="hidden"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Sidebar - Hidden on mobile */}
+        <div className="hidden md:block w-80 lg:w-96 border-l overflow-y-auto">
+          <div className="h-full flex flex-col">
+            <div className="p-4 border-b">
+              <h2 className="text-lg font-semibold flex items-center">
+                <Sparkles className="mr-2 h-5 w-5 text-indigo-600" />
+                Financial Dashboard
+              </h2>
+            </div>
+
+            <Tabs defaultValue="info" className="flex-1">
+              <TabsList className="grid grid-cols-3 p-4">
+                <TabsTrigger value="info">Loan Info</TabsTrigger>
+                <TabsTrigger value="rates">Rates</TabsTrigger>
+                <TabsTrigger value="history">History</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="info" className="p-4 space-y-4 overflow-auto">
+                {loanInfo.loan_type ? (
+                  <div className="space-y-4">
+                    <Card>
+                      <CardHeader className="py-3">
+                        <CardTitle>Loan Type</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p>{loanInfo.loan_type}</p>
+                      </CardContent>
+                    </Card>
+
+                    {loanInfo.interest_rate && (
+                      <Card>
+                        <CardHeader className="py-3">
+                          <CardTitle>Interest Rate</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p>{loanInfo.interest_rate}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {loanInfo.eligibility && (
+                      <Card>
+                        <CardHeader className="py-3">
+                          <CardTitle>Eligibility</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {loanInfo.repayment_options && (
+                      <Card>
+                        <CardHeader className="py-3">
+                          <CardTitle>Repayment Options</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {loanInfo.additional_info && (
+                      <Card>
+                        <CardHeader className="py-3">
+                          <CardTitle>Additional Information</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ReactMarkdown>{loanInfo.additional_info}</ReactMarkdown>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <LayoutDashboard className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                    <p>No loan information available yet</p>
+                    <p className="text-sm">Ask about specific loans to see details here</p>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="rates" className="p-4 overflow-auto">
+                <div className="space-y-4">
+                  {interestRates.length > 0 ? (
+                    interestRates.map((rate, index) => (
+                      <Card key={index}>
+                        <CardHeader className="py-3">
+                          <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="pb-4">
+                          <div className="flex justify-between items-center mb-2">
+                            <span>Min</span>
+                            <span>Max</span>
                           </div>
-                        )
+                          <div className="relative h-9 w-full bg-muted rounded-lg">
+                            <div
+                              className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
+                              style={{ width: "100%" }}
+                            ></div>
+                            <div className="absolute inset-0 flex justify-between items-center px-3">
+                              <Badge variant="secondary">{rate.min_rate}%</Badge>
+                              <Badge variant="secondary">{rate.max_rate}%</Badge>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      {isFetchingData ? (
+                        <div className="flex flex-col items-center">
+                          <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                          <p>Fetching interest rates...</p>
+                        </div>
+                      ) : (
+                        <>
+                          <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                          <p>Interest rate data unavailable</p>
+                        </>
                       )}
                     </div>
-                  ) : collegeInfo.cutoff ? (
-                    <p>
-                      <Typewriter
-                        options={{
-                          strings: collegeInfo.cutoff.toString(),
-                          autoStart: false,
-                          loop: false,
-                        }}
-                      />
-                    </p>
-                  ) : (
-                    <p>No cutoff information available</p>
                   )}
                 </div>
-              </div>
-              <div
-                className={`p-3 rounded-lg ${
-                  isDarkMode ? "bg-gray-700" : "bg-gray-200"
-                }`}
-              >
-                <h4 className="font-semibold mb-2 flex items-center">
-                  <Heart size={25} className="mr-2 text-pink-500" /> Scholarship
-                </h4>
-                <p>
-                  {collegeInfo.scholarships &&
-                  collegeInfo.scholarships != "0" ? (
-                    <Typewriter
-                      options={{
-                        strings: collegeInfo.scholarships.toString(),
-                        autoStart: true,
-                        loop: false,
-                      }}
-                    />
-                  ) : (
-                    "Not selected"
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="space-y-4 mt-6">
+              </TabsContent>
+
+              <TabsContent value="history" className="p-4 overflow-auto">
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="py-3">
+                      <CardTitle className="flex items-center">
+                        <Clock className="mr-2 h-4 w-4" />
+                        Recent Queries
+                      </CardTitle>
+                      <CardDescription>Recently asked loan questions</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {recentQueries.length > 0 ? (
+                        <div className="space-y-3">
+                          {recentQueries.map((query) => (
+                            <div key={query.id} className="flex items-start space-x-2 pb-3 border-b last:border-0">
+                              <MessageSquareText className="h-4 w-4 mt-1 text-muted-foreground" />
+                              <div className="flex-1">
+                                <p className="text-sm">{query.query}</p>
+                                <div className="flex items-center mt-1">
+                                  <Badge variant="outline" className="text-xs mr-2">
+                                    {query.loan_type}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground">
+                                    {query.hours_ago < 1 ? "Just now" : `${Math.floor(query.hours_ago)}h ago`}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-muted-foreground">
+                          {isFetchingData ? (
+                            <div className="flex justify-center">
+                              <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
+                            </div>
+                          ) : (
+                            <p className="text-sm">No recent queries</p>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="py-3">
+                      <CardTitle className="flex items-center">
+                        <Lightbulb className="mr-2 h-4 w-4 text-yellow-500" />
+                        Financial Tips
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {financialTips.length > 0 ? (
+                        <div className="space-y-3">
+                          {financialTips.map((tip, index) => (
+                            <div key={index} className="flex">
+                              <div className="mr-3 mt-0.5">
+                                <span className="flex h-2 w-2 bg-indigo-600 rounded-full"></span>
+                              </div>
+                              <p className="text-sm">{tip}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-muted-foreground">
+                          {isFetchingData ? (
+                            <div className="flex justify-center">
+                              <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
+                            </div>
+                          ) : (
+                            <p className="text-sm">No tips available</p>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <div className="p-4 border-t space-y-3 mt-auto">
               <Button
-                onClick={downloadSummary}
-                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-md font-bold"
+                onClick={() => {
+                  fileInputRef.current?.click()
+                }}
+                className="w-full"
+                variant="outline"
               >
-                Download Summary
+                <Upload className="mr-2 h-4 w-4" /> Upload Document
               </Button>
-              <Button
-                onClick={handleOpenCollegeComparison}
-                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-md font-bold"
-              >
-                College Comparison
+
+              <Button onClick={downloadSummary} className="w-full" variant="outline">
+                <Download className="mr-2 h-4 w-4" /> Download Summary
               </Button>
-              <div className="flex space-x-2">
-                <Button 
-                  onClick={handleOpenQuiz}
-                  className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-md font-bold"
-                >
-                  Take Course Selection Quiz
-                </Button>
-                <Button
-                  onClick={handleOpenComparison}
-                  className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 rounded-md font-bold"
-                >
-                  Course Vs Course
-                </Button>
-              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Mobile Navigation */}
-      <MobileNav
-        collegeInfo={collegeInfo}
-        onOpenCollegeComparison={handleOpenCollegeComparison}
-        onOpenCourseComparison={handleOpenComparison}
-        onOpenQuiz={handleOpenQuiz}
-        onDownloadSummary={downloadSummary}
-        isDarkMode={isDarkMode}
-      />
+      {/* Voice mode content */}
+      {isVoiceMode && (
+        <Drawer open={true} onOpenChange={setIsVoiceMode}>
+          <DrawerContent>
+            <DrawerHeader>
+              <DrawerTitle>Voice Mode</DrawerTitle>
+              <DrawerDescription>Speak to your financial advisor</DrawerDescription>
+            </DrawerHeader>
+            <div className="p-4 text-center">
+              <div
+                className={`mx-auto w-24 h-24 rounded-full flex items-center justify-center mb-4 ${
+                  isRecording
+                    ? "bg-red-100 dark:bg-red-900 animate-pulse"
+                    : isPlaying
+                      ? "bg-blue-100 dark:bg-blue-900"
+                      : "bg-indigo-100 dark:bg-indigo-950"
+                }`}
+              >
+                {isRecording ? (
+                  <Mic className="h-10 w-10 text-red-600 dark:text-red-400" />
+                ) : isPlaying ? (
+                  <MessageSquareText className="h-10 w-10 text-blue-600 dark:text-blue-400" />
+                ) : (
+                  <Mic className="h-10 w-10 text-indigo-600 dark:text-indigo-400" />
+                )}
+              </div>
 
-      <ToastContainer />
-      
-      {isCollegeComparisonOpen && (
-        <CollegeComparison onClose={handleCloseCollegeComparison} />
+              <div className="flex items-center justify-center mb-4">
+                <div className={`w-3 h-3 rounded-full mr-2 ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
+                <span className="text-sm">
+                  {isRecording
+                    ? isSpeaking
+                      ? "I can hear you speaking"
+                      : "Listening for your voice..."
+                    : isPlaying
+                      ? "AI is speaking"
+                      : "Ready to listen"}
+                </span>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="autoDetectLanguage"
+                    checked={autoDetectLanguage}
+                    onChange={() => setAutoDetectLanguage(!autoDetectLanguage)}
+                    className="mr-1"
+                  />
+                  <label htmlFor="autoDetectLanguage" className="text-sm">
+                    Auto-detect language
+                  </label>
+                </div>
+
+                {!autoDetectLanguage && (
+                  <div className="flex justify-center">
+                    <select
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value)}
+                      className="border rounded p-1 text-sm"
+                    >
+                      {languages.map((lang) => (
+                        <option key={lang.code} value={lang.code}>
+                          {lang.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="flex justify-center space-x-3">
+                  <Button
+                    variant={isRecording ? "destructive" : "default"}
+                    onClick={isRecording ? stopVoiceChat : startVoiceChat}
+                    disabled={isPlaying}
+                    className="flex items-center"
+                  >
+                    {isRecording ? (
+                      <>
+                        <MicOff className="mr-2 h-4 w-4" /> Stop Recording
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="mr-2 h-4 w-4" /> Start Recording
+                      </>
+                    )}
+                  </Button>
+
+                  <Button variant="outline" onClick={() => setIsVoiceMode(false)}>
+                    Switch to Text Mode
+                  </Button>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsDrawerOpen(true)}
+                  className="text-xs text-muted-foreground"
+                >
+                  Show Debug Info
+                </Button>
+              </div>
+            </div>
+          </DrawerContent>
+        </Drawer>
       )}
-      {isComparisonOpen && (
-        <CourseComparison onClose={handleCloseComparison} />
-      )}
-      {isQuizOpen && <CourseSelectionQuiz onClose={handleCloseQuiz} />}
+
+      {/* Hidden audio element for playback */}
+      <audio ref={audioRef} className="hidden" />
+
+      {/* Debug section - Toggle with button */}
+      <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
+        <DrawerContent>
+          <DrawerHeader>
+            <DrawerTitle>Debug Information</DrawerTitle>
+            <DrawerDescription>Technical details about the voice processing</DrawerDescription>
+          </DrawerHeader>
+          <div className="p-4 max-h-96 overflow-y-auto">
+            <div className="space-y-2">
+              <div className="flex items-center space-x-2">
+                <div className={`w-3 h-3 rounded-full ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
+                <span className="text-sm">{isSpeaking ? "Speaking detected" : "Silence detected"}</span>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <div className={`w-3 h-3 rounded-full ${isPlaying ? "bg-blue-500" : "bg-gray-300"}`}></div>
+                <span className="text-sm">{isPlaying ? "AI is speaking" : "AI is silent"}</span>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <div className={`w-3 h-3 rounded-full ${isRecording ? "bg-red-500" : "bg-gray-300"}`}></div>
+                <span className="text-sm">{isRecording ? "Recording active" : "Recording inactive"}</span>
+              </div>
+
+              <div className="mt-4">
+                <h3 className="font-semibold mb-2">Debug Logs:</h3>
+                <div className="bg-muted p-2 rounded text-xs space-y-1 max-h-60 overflow-y-auto">
+                  {debugLogs.map((log, i) => (
+                    <div key={i} className="whitespace-pre-wrap">
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </DrawerContent>
+      </Drawer>
     </div>
-  );
-}
-export default ChatbotPage;
-
-function setIsQuizOpen(arg0: boolean) {
-  throw new Error("Function not implemented.");
-}
-function setIsLoading(arg0: boolean) {
-  throw new Error("Function not implemented.");
-}
-
-function setSummary(summary: any) {
-  throw new Error("Function not implemented.");
-}
-
-function saveAs(blob: Blob, arg1: string) {
-  throw new Error("Function not implemented.");
+  )
 }
 

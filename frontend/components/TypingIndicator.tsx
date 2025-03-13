@@ -1,61 +1,21 @@
-import React from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+"use client"
+
+import type { FC } from "react"
+import React from "react"
 
 interface TypingIndicatorProps {
-  isVisible: boolean
-  startColor?: string
-  endColor?: string
-  size?: number
-  animationDuration?: number
+  isVisible?: boolean
 }
 
-export const TypingIndicator: React.FC<TypingIndicatorProps> = ({
-  isVisible,
-  startColor = '#9333ea',
-  endColor = '#4f46e5',
-  size = 8,
-  animationDuration = 1.7,
-}) => {
-  const dotVariants = {
-    initial: { y: 0, opacity: 0 },
-    animate: { y: [0, -8, 0], opacity: 1 },
-    exit: { opacity: 0 },
-  }
+export const TypingIndicator: FC<TypingIndicatorProps> = ({ isVisible = true }) => {
+  if (!isVisible) return null
 
   return (
-    <AnimatePresence>
-      {isVisible && (
-        <motion.div
-          className="flex items-center space-x-1 p-2 rounded-full bg-transparent "
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          {[0, 1, 2].map((index) => (
-            <motion.div
-              key={index}
-              style={{
-                width: size,
-                height: size,
-                borderRadius: '50%',
-                background: `linear-gradient(to right, ${startColor}, ${endColor})`,
-              }}
-              variants={dotVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              transition={{
-                duration: animationDuration,
-                repeat: Infinity,
-                repeatType: 'reverse',
-                ease: 'easeInOut',
-                delay: index * 0.2,
-              }}
-            />
-          ))}
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <div className="flex items-center space-x-1 py-2">
+      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: "0ms" }}></div>
+      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: "150ms" }}></div>
+      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: "300ms" }}></div>
+    </div>
   )
 }
+

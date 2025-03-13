@@ -1,6 +1,5 @@
 import json
 import os
-import time
 from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
@@ -42,7 +41,6 @@ Response Format:
 {format_instructions}
 """)
 
-
 @tool("Loan Eligibility Check")
 def check_loan_eligibility(user_info: str) -> dict:
     """Determine the user's loan eligibility based on financial details."""
@@ -56,7 +54,6 @@ def check_loan_eligibility(user_info: str) -> dict:
         return loan_eligibility_parser.parse(response.content)
     except Exception as e:
         return {"error": str(e)}
-
 
 loan_application_schema = [
     ResponseSchema(name="required_documents", description="List of required documents for the loan application"),
@@ -75,7 +72,6 @@ Response Format:
 {format_instructions}
 """)
 
-
 @tool("Loan Application Guidance")
 def guide_loan_application(loan_type: str) -> dict:
     """Guide users through the loan application process, including required documents and steps."""
@@ -90,10 +86,6 @@ def guide_loan_application(loan_type: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-
-# =============================== #
-# 🔹 TOOL 3: FINANCIAL LITERACY TIPS
-# =============================== #
 financial_tips_schema = [
     ResponseSchema(name="saving_tips", description="Effective saving strategies"),
     ResponseSchema(name="credit_score_tips", description="How to improve and maintain a good credit score"),
@@ -111,7 +103,6 @@ Response Format:
 {format_instructions}
 """)
 
-
 @tool("Financial Literacy Tips")
 def get_financial_tips(topic: str) -> dict:
     """Provide financial literacy tips, such as saving strategies or credit score improvement."""
@@ -125,7 +116,6 @@ def get_financial_tips(topic: str) -> dict:
         return financial_tips_parser.parse(response.content)
     except Exception as e:
         return {"error": str(e)}
-
 
 financial_goal_schema = [
     ResponseSchema(name="goal", description="The financial goal set by the user"),
@@ -149,7 +139,6 @@ Response Format:
 {format_instructions}
 """)
 
-
 @tool("Financial Goal Tracking")
 def track_financial_goal(goal: str, status: str) -> dict:
     """Help users track financial goals, offer loan advice, and remind them of loan due dates."""
@@ -164,7 +153,6 @@ def track_financial_goal(goal: str, status: str) -> dict:
         return financial_goal_parser.parse(response.content)
     except Exception as e:
         return {"error": str(e)}
-
 
 # Define Response Schema for Main FinMate Output
 response_schemas = [
@@ -604,66 +592,3 @@ def ChatModel(msg, document_path=None):
         formatted_response = extracted_info["result"] or "I couldn't process your request."
 
     return {"res": {"msg": formatted_response}, "info": extracted_info}
-
-def run_terminal_chat():
-    """
-    Runs a terminal-based chatbot session with document upload support.
-    """
-    print("\n" + "="*60)
-    print("🏦 FinMate - Your AI Loan Advisor 🏦")
-    print("="*60)
-    print("Commands:")
-    print("  'exit' or 'quit': End the conversation")
-    print("  'upload [path]': Upload and analyze a document")
-    print("="*60 + "\n")
-    
-    print("🤖 FinMate: Hello! I'm FinMate, your AI loan advisor. How can I assist you with loans today?")
-
-    current_document = None
-
-    while True:
-        user_input = input("\n👤 You: ")
-        
-        if user_input.lower() in ['exit', 'quit', 'bye']:
-            print("\n🤖 FinMate: Thank you for using Loan Advisory. Have a great day!")
-            break
-            
-        # Check for document upload command
-        if user_input.lower().startswith('upload '):
-            doc_path = user_input[7:].strip()
-            if os.path.exists(doc_path):
-                print(f"\n🤖 FinMate: Processing document '{os.path.basename(doc_path)}'...")
-                try:
-                    doc_result = document_processor.process_document(doc_path)
-                    if doc_result["success"]:
-                        current_document = doc_path
-                        print(f"\n🤖 FinMate: Successfully processed {doc_result['pages_processed']} pages from '{doc_result['file_name']}'.")
-                        print(doc_result.get())
-                        print(f"Document content will be included in our conversation context.")
-                    else:
-                        print(f"\n🤖 FinMate: Failed to process document: {doc_result.get('error', 'Unknown error')}")
-                except Exception as e:
-                    print(f"\n🤖 FinMate: Error processing document: {str(e)}")
-            else:
-                print(f"\n🤖 FinMate: I couldn't find the document at '{doc_path}'. Please check the path and try again.")
-                
-            continue
-
-        try:
-            # Process the message with the current document context
-            result = ChatModel(user_input, current_document)
-            response = result["res"]["msg"]
-
-            # Print the response
-            print(f"\n🤖 FinMate: {response}")
-
-        except Exception as e:
-            print(f"\n🤖 FinMate: Sorry, I encountered an error: {str(e)}")
-
-if __name__ == "__main__":
-    try:
-        run_terminal_chat()
-    except KeyboardInterrupt:
-        print("\n\nChat session terminated by user. Goodbye!")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred: {str(e)}")

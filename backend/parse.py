@@ -89,7 +89,6 @@ class SarvamDocumentParser:
             
             while retry_count <= max_retries:
                 try:
-                    # Open the PDF file
                     with open(file_path, "rb") as pdf_file:
                         print(f"Trying with mode: {current_mode}, attempt {retry_count+1} for page {page_number}")
                         
@@ -104,7 +103,13 @@ class SarvamDocumentParser:
                         }
                         
                         # Send request to Sarvam API
-                        response = requests.post(self.parse_url, headers=headers, files=files, data=data)
+                        try:
+                            response = requests.post(self.parse_url, headers=headers, files=files, data=data, timeout=30)  # Added timeout
+                            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+                        except requests.exceptions.RequestException as e:
+                            last_error = f"Request error for page {page_number}: {str(e)}"
+                            print(last_error)
+                            break
                         
                         if response.status_code == 200:
                             # Process the response
@@ -216,7 +221,6 @@ class SarvamDocumentParser:
                 "failed_pages": failed_pages,
                 "total_pages": page_count
             }
-
 # Langchain tool wrapper function for single page
 def parse_document_page(file_path: str, api_key: str, page: int = 1) -> Dict[str, Any]:
     """
@@ -232,7 +236,6 @@ def parse_document_page(file_path: str, api_key: str, page: int = 1) -> Dict[str
     """
     parser = SarvamDocumentParser(api_key)
     return parser.parse_pdf(file_path, page_number=page)
-
 # Langchain tool wrapper function for multiple pages
 def parse_document(file_path: str, api_key: str, max_pages: int = 5) -> Dict[str, Any]:
     """
@@ -248,7 +251,6 @@ def parse_document(file_path: str, api_key: str, max_pages: int = 5) -> Dict[str
     """
     parser = SarvamDocumentParser(api_key)
     return parser.parse_pdf_multiple_pages(file_path, max_pages=max_pages)
-
 # Example usage
 if __name__ == "__main__":
     # Install requirements first
@@ -259,6 +261,22 @@ if __name__ == "__main__":
     
     parser = SarvamDocumentParser(api_key)
     
+    print("=== Single page parsing test ===")
+    result = parser.parse_pdf(file_path, page_number=1)  # Parse the first page
+    
+    if result["success"]:
+        print(f"\n✅ Successfully parsed page {result['page']} from {result['file_name']}")
+        print(f"Content length: {len(result['raw_xml'])} characters")
+        print("\nFirst 300 characters of content:")
+        print(result['raw_xml'][:300] + "...")
+    else:
+        print(f"\n❌ Parsing failed. Error: {result['error']}")
+        print("\nTroubleshooting tips:")
+        print("1. Check if the PDF is password protected")
+        print("2. Try with a simpler PDF document to test the API")
+        print("3. Verify your API key is correct")
+        print("4. Sarvam API may be experiencing issues - try again later")
+    
     print("=== Multi-page parsing test ===")
     result = parser.parse_pdf_multiple_pages(file_path, max_pages=3)  # Parse up to 3 pages
     
@@ -268,7 +286,7 @@ if __name__ == "__main__":
         print(f"Failed pages: {result['failed_pages']}")
         print(f"Content length: {len(result['raw_xml'])} characters")
         print("\nFirst 300 characters of content:")
-        print(result['raw_xml'][:] + "...")
+        print(result['raw_xml'][:300] + "...")
     else:
         print(f"\n❌ All parsing attempts failed. Error: {result['error']}")
         print("\nTroubleshooting tips:")

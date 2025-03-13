@@ -1,29 +1,31 @@
-"use client";
+import React from "react"
+import type { Metadata } from "next"
+import { Inter } from "next/font/google"
+import "./globals.css"
+import { ThemeProvider } from "@/components/theme-provider"
+import { Toaster } from "sonner"
 
-import "./globals.css";
-import React from "react";
-import { ReduxProvider } from "@/redux/ReduxProvider";
-import { GoogleOAuthProvider } from "@react-oauth/google";
-import { AuthProvider } from "@/app/authContext"; // Import the AuthProvider
+const inter = Inter({ subsets: ["latin"] })
+
+export const metadata: Metadata = {
+  title: "FinMate | Loan Advisor",
+  description: "Multilingual conversational loan advisor to help with financial decisions",
+}
 
 export default function RootLayout({
   children,
-}: {
-  children: React.ReactNode;
-}) {
+}: Readonly<{
+  children: React.ReactNode
+}>) {
   return (
-    <html lang="en">
-      <body className="bg-gray-900 text-white">
-        <ReduxProvider>
-          <GoogleOAuthProvider
-            clientId={`568541926291-c822nidma6977gon1vnrnv1hj3fmu16v.apps.googleusercontent.com`}
-          >
-            <AuthProvider> {/* Wrap children with AuthProvider */}
-              {children}
-            </AuthProvider>
-          </GoogleOAuthProvider>
-        </ReduxProvider>
+    <html lang="en" suppressHydrationWarning>
+      <body className={inter.className}>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          {children}
+          <Toaster position="top-right" />
+        </ThemeProvider>
       </body>
     </html>
-  );
+  )
 }
+

@@ -7,9 +7,16 @@ import { useInView } from 'react-intersection-observer'
 import { GraduationCap, Book, Users, MessageCircle, Menu, X, Clock, Database, Mic, Sun, Moon, Crown, Globe, Shield, Zap } from 'lucide-react'
 import { Button } from "@nextui-org/button"
 import Image from 'next/image'
+import { io } from 'socket.io-client'
+import { toast } from 'react-toastify'
+import React from 'react'
+
 export default function LandingPage() {
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [showChatButton, setShowChatButton] = useState(false)
+  const [isConnected, setIsConnected] = useState(false)
+  const [socket, setSocket] = useState(null)
+  const socketRef = useRef(null)
   const controls = useAnimation()
   const [ref, inView] = useInView()
 
@@ -32,11 +39,66 @@ export default function LandingPage() {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
+  useEffect(() => {
+    // Ensure VOICE_URL is defined
+    const voiceUrl = process.env.NEXT_PUBLIC_VOICE_URL;
+    if (!voiceUrl) {
+      console.error("VOICE_URL is not defined in environment variables.");
+      return;
+    }
+
+    // Connect to the Socket.io server
+    const connectToWebSocket = async () => {
+      try {
+        console.log("Connecting to server at:", voiceUrl);
+        const socket = io(voiceUrl, {
+          transports: ["websocket"],
+          forceNew: true,
+        });
+
+        socket.on("connect", () => {
+          console.log("Connected to server");
+          setIsConnected(true);
+          toast.success("Connected to server");
+        });
+
+        socket.on("disconnect", () => {
+          console.log("Disconnected from server");
+          setIsConnected(false);
+          toast.error("Disconnected from server. Trying to reconnect...");
+        });
+
+        socket.on("connect_error", (error) => {
+          console.error("Connection error:", error);
+          setIsConnected(false);
+          toast.error("Connection error. Trying to reconnect...");
+        });
+
+        socket.on("response", handleSocketResponse);
+
+        socketRef.current = socket;
+        setSocket(socket);
+      } catch (error) {
+        console.error("Error connecting to WebSocket:", error);
+        toast.error("Failed to connect to server");
+      }
+    };
+
+    connectToWebSocket();
+
+    return () => {
+      socketRef.current?.disconnect();
+    };
+  }, []);
+
   const fadeIn = {
     hidden: { opacity: 0, y: 20 },
     visible: { opacity: 1, y: 0 }
   }
-
+  const handleSocketResponse = (response: any) => {
+    console.log("Socket response received:", response);
+    // Add your handling logic here
+  };
   const staggerChildren = {
     hidden: { opacity: 0 },
     visible: {

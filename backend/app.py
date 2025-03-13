@@ -1,46 +1,21 @@
+from io import BytesIO, StringIO
 import os
-import ssl
-import asyncio
 import logging
 import traceback
-from flask import Flask, request, jsonify, send_file
-from flask_pymongo import PyMongo
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
-from bson import ObjectId
+import tempfile
+from flask import Flask, request, jsonify
+from werkzeug.utils import secure_filename
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from playwright.async_api import async_playwright
 from fpdf import FPDF
-from dotenv import load_dotenv
-from datetime import datetime, timedelta
-from io import BytesIO, StringIO
-from werkzeug.utils import secure_filename
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 import numpy as np
 import pandas as pd
-from sidebar import sidebar_bp, init_mongo
+from document_processor import DocumentProcessor
+from chat_model import ChatModel
+# Import the summary blueprint
 from summary import summary_bp
-from admin_page import admin_page
-from chat_model import *
-
-# Load environment variables
-load_dotenv()
-
-# Check for required environment variables
-required_vars = ["MONGODB_URI", "DATABASE_NAME", "COLLECTION_NAME", "INDEX_NAME"]
-missing_vars = [var for var in required_vars if var not in os.environ]
-
-if missing_vars:
-    raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-# Get environment variables
-MONGODB_URI = os.getenv("MONGODB_URI")
-DATABASE_NAME = os.getenv("DATABASE_NAME")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME")
-INDEX_NAME = os.getenv("INDEX_NAME")
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -48,33 +23,25 @@ CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 app.secret_key = "your_unique_secret_key"
 
-# MongoDB configuration
-try:
-    client = MongoClient(
-        MONGODB_URI,
-        tls=True,
-        tlsAllowInvalidCertificates=True
-    )
-    db = client[DATABASE_NAME]
-    collection = db[COLLECTION_NAME]
-    init_mongo(app)
-    print("Connected to MongoDB")
-except ConnectionFailure:
-    print("Failed to connect to MongoDB")
-
-app.register_blueprint(sidebar_bp)
+# Register the summary blueprint
 app.register_blueprint(summary_bp)
-app.register_blueprint(admin_page)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize document processor
+document_processor = DocumentProcessor("b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf")
+
+# Dictionary to store temporary document paths for chat sessions
+document_cache = {}
 
 # Allowed file extensions
-ALLOWED_EXTENSIONS = {'pdf', 'csv'}
+ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'csv'}
 
 def allowed_file(filename):
     """Check if the file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-# Initialize SentenceTransformer model
-model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Extract text from a PDF file
 def extract_text_from_pdf(file_storage) -> str:
@@ -88,6 +55,7 @@ def extract_text_from_pdf(file_storage) -> str:
                 text += page_text + "\n"
         return text
     except Exception as e:
+        logger.error(f"Error extracting text from PDF: {str(e)}")
         return ""
 
 # Extract text from a CSV file
@@ -97,207 +65,158 @@ def extract_text_from_csv(file_storage) -> str:
         df = pd.read_csv(file_stream)
         return df.to_string(index=False)
     except Exception as e:
+        logger.error(f"Error extracting text from CSV: {str(e)}")
         return ""
 
-# Cosine similarity calculation
-def cosine_similarity(a: list, b: list) -> float:
-    a_np = np.array(a)
-    b_np = np.array(b)
-    if np.linalg.norm(a_np) == 0 or np.linalg.norm(b_np) == 0:
-        return 0.0
-    return np.dot(a_np, b_np) / (np.linalg.norm(a_np) * np.linalg.norm(b_np))
-
-# Save the content to a PDF
-def save_to_pdf(content, filename="output.pdf"):
-    try:
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-        pdf.add_font('ArialUnicode', '', 'C:/Windows/Fonts/arialuni.ttf', uni=True)
-        pdf.set_font('ArialUnicode', '', 12)
-
-        lines = content.split("\n")
-        for line in lines:
-            pdf.cell(200, 10, txt=line, ln=True)
-
-        os.makedirs('outputs', exist_ok=True)
-        full_path = os.path.join('outputs', filename)
-        pdf.output(full_path)
-        return full_path
-    except Exception as e:
-        print(f"Error saving PDF: {e}")
-        return ""
-
-# Scrape and transform content using Playwright
-async def scrape_and_transform(url):
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(url)
-            content = await page.content()
-            await browser.close()
-            return content
-    except Exception as e:
-        print(f"Error during scraping: {e}")
-        return ""
-
-@app.route('/scrape_and_generate_pdf', methods=['POST'])
-async def scrape_and_generate_pdf():
-    try:
-        url = request.json.get('url')
-        if not url:
-            return jsonify({"error": "No URL provided"}), 400
-
-        content = await scrape_and_transform(url)
-        if not content.strip():
-            return jsonify({"error": "No content found or an error occurred during scraping."}), 400
-
-        pdf_filename = f"scraped_content_{hash(url)}.pdf"
-        pdf_path = save_to_pdf(content, pdf_filename)
-
-        return send_file(pdf_path, as_attachment=True)
-    except Exception as e:
-        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
-
-@app.route('/api/upload', methods=['POST'])
-def upload_file():
+# Simplified document upload route (removed /api/ prefix)
+@app.route('/upload-document', methods=['POST'])
+def upload_document():
     if 'file' not in request.files:
         return jsonify({"error": "No file part in the request."}), 400
 
     file = request.files['file']
+    chat_id = request.form.get('chat_id', 'default_id')
 
     if file.filename == '':
         return jsonify({"error": "No selected file."}), 400
 
     if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        file_type = filename.rsplit('.', 1)[1].lower()
-        doc_name = filename.rsplit('.', 1)[0]
-
-        if file_type == 'pdf':
-            text = extract_text_from_pdf(file)
-        elif file_type == 'csv':
-            text = extract_text_from_csv(file)
-        else:
-            return jsonify({"error": "Unsupported file type."}), 400
-
-        if not text:
-            return jsonify({"error": "Failed to extract text from the file."}), 400
-
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = text_splitter.split_text(text)
-
-        if not chunks:
-            return jsonify({"error": "Failed to create text chunks."}), 400
-
-        embeddings = model.encode(chunks).tolist()
-
-        documents = [
-            {
-                "docName": doc_name,
-                "type": file_type,
-                "text": chunk,
-                "embedding": embedding
-            }
-            for chunk, embedding in zip(chunks, embeddings)
-        ]
-
         try:
-            collection.insert_many(documents)
-            return jsonify({"message": f"File '{filename}' uploaded and processed successfully."}), 200
+            # Create a temporary file to store the upload
+            temp_dir = tempfile.gettempdir()
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(temp_dir, filename)
+            
+            # Save the file temporarily
+            file.save(file_path)
+            
+            # Process the document
+            logger.info(f"Processing document: {filename}")
+            result = document_processor.process_document(file_path, max_pages=5)
+            
+            # Store the document path for this chat session
+            document_cache[chat_id] = file_path
+            
+            # Extract key information if processing succeeded
+            if result["success"]:
+                key_info = document_processor.extract_key_information(result["content"])
+                
+                logger.info(f"Successfully processed document: {filename}, {result['pages_processed']} pages")
+                
+                return jsonify({
+                    "success": True, 
+                    "filename": filename,
+                    "pages_processed": result["pages_processed"],
+                    "total_pages": result["total_pages"],
+                    "extracted_info": key_info.get("extracted_info", {}),
+                    "document_summary": key_info.get("document_summary", "")
+                })
+            else:
+                logger.error(f"Failed to process document: {result.get('error')}")
+                return jsonify({
+                    "success": False, 
+                    "error": result.get("error", "Failed to process document")
+                }), 400
+                
         except Exception as e:
-            return jsonify({"error": "Failed to store embeddings in the database."}), 500
-    else:
-        return jsonify({"error": "File type not allowed. Only PDF and CSV are supported."}), 400
+            logger.error(f"Error processing document: {str(e)}")
+            return jsonify({"error": f"Error processing document: {str(e)}"}), 500
+            
+    return jsonify({"error": "File type not allowed. Only PDF, DOC, DOCX and CSV are supported."}), 400
 
-@app.route('/api/documents', methods=['GET'])
-def get_documents():
+# Simple route for interest rates (removed /api/ prefix)
+@app.route('/interest-rates', methods=['GET'])
+def get_interest_rates():
     try:
-        pipeline = [
-            {"$group": {"_id": {"docName": "$docName", "type": "$type"}}},
-            {"$project": {"docName": "$_id.docName", "type": "$_id.type", "_id": 0}}
+        # Sample data - replace with your actual data source
+        rates = [
+            {"loan_type": "Home Loan", "min_rate": 6.5, "max_rate": 8.5},
+            {"loan_type": "Personal Loan", "min_rate": 10.5, "max_rate": 18.0},
+            {"loan_type": "Car Loan", "min_rate": 8.0, "max_rate": 12.0},
+            {"loan_type": "Education Loan", "min_rate": 7.0, "max_rate": 15.0}
         ]
-        unique_documents = list(collection.aggregate(pipeline))
-        return jsonify(unique_documents), 200
+        return jsonify(rates)
     except Exception as e:
-        return jsonify({"error": "Failed to fetch documents."}), 500
+        logger.error(f"Error fetching interest rates: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/documents/<doc_name>', methods=['DELETE'])
-def delete_document(doc_name):
+# Simple route for recent queries (removed /api/ prefix)
+@app.route('/recent-queries', methods=['GET'])
+def get_recent_queries():
     try:
-        result = collection.delete_many({"docName": doc_name})
-        if result.deleted_count == 0:
-            return jsonify({"message": f"No documents found for document '{doc_name}'."}), 404
-        return jsonify({"message": f"Document '{doc_name}' and its chunks deleted successfully."}), 200
+        # Sample data - replace with your actual data source
+        queries = [
+            {"id": "1", "query": "How do I qualify for a home loan?", "loan_type": "Home Loan", "hours_ago": 2},
+            {"id": "2", "query": "What are current personal loan rates?", "loan_type": "Personal Loan", "hours_ago": 4},
+            {"id": "3", "query": "How much can I borrow for a car?", "loan_type": "Car Loan", "hours_ago": 6}
+        ]
+        return jsonify(queries)
     except Exception as e:
-        return jsonify({"error": "Failed to delete document."}), 500
+        logger.error(f"Error fetching recent queries: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/search', methods=['POST'])
-def search_chunks():
-    data = request.get_json()
-    query = data.get('query')
-    if not query:
-        return jsonify({"error": "Query is required."}), 400
-
-    query_embedding = model.encode(query).tolist()
-
+# Simple route for financial tips (removed /api/ prefix)
+@app.route('/financial-tips', methods=['GET'])
+def get_financial_tips():
     try:
-        documents = collection.find({"embedding": {"$exists": True}}, {"docName": 1, "type": 1, "text": 1, "embedding": 1})
-
-        results = []
-        for doc in documents:
-            similarity = cosine_similarity(query_embedding, doc['embedding'])
-            results.append({
-                "docName": doc.get("docName", "N/A"),
-                "type": doc.get("type", "N/A"),
-                "text": doc.get("text", "N/A"),
-                "similarity": similarity
-            })
-
-        if not results:
-            return jsonify({"message": "No documents found."}), 200
-
-        top_k = 5
-        results = sorted(results, key=lambda x: x['similarity'], reverse=True)[:top_k]
-
-        return jsonify(results), 200
+        # Sample data - replace with your actual data source
+        tips = [
+            "Save at least 20% of your income for future goals.",
+            "Pay off high-interest debt before investing.",
+            "Maintain a good credit score by paying bills on time.",
+            "Create an emergency fund with 3-6 months of expenses."
+        ]
+        return jsonify(tips)
     except Exception as e:
-        return jsonify({"error": "An error occurred during the search."}), 500
+        logger.error(f"Error fetching financial tips: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/recent-questions', methods=['GET'])
-def get_recent_questions():
-    recent_questions = list(db.recent_questions.find().sort('timestamp', -1).limit(3))
-    formatted_questions = [
-        {
-            'question': question['question'],
-            'time': (datetime.utcnow() - question['timestamp']).total_seconds() / 3600
-        } for question in recent_questions
-    ]
-    return jsonify(formatted_questions)
-
+# WebSocket event handler (unchanged as it's not an HTTP route)
 @socketio.on('send_message')
 def handle_send_message(msg):
-    print("Generating response for: ", msg.get("msg", ""))
-    chat_id = msg.get("id", "default_id")
-    user_message = msg.get("msg", "")
-    message_history = msg.get("messages", [])
-    db.chatbot_requests.insert_one({
-        'chat_id': chat_id,
-        'message': user_message,
-        'timestamp': datetime.utcnow()
-    })
-    db.recent_questions.insert_one({
-        'question': user_message,
-        'timestamp': datetime.utcnow()
-    })
     try:
-        res = ChatModel(chat_id, user_message, message_history)
-        print("sending", res)
-        emit("response", res)
+        chat_id = msg.get("id", "default_id")
+        user_message = msg.get("msg", "")
+        
+        logger.info(f"Generating response for chat_id={chat_id}, msg='{user_message}'")
+        
+        # Get document path from cache if it exists
+        document_path = document_cache.get(chat_id)
+        
+        # Call the ChatModel with user message and document path
+        result = ChatModel(user_message, document_path)
+        
+        # Send the response to the client
+        logger.info(f"Sending response for chat_id={chat_id}")
+        emit("response", result)
+        
     except Exception as e:
-        print(f"Error in ChatModel: {str(e)}")
-        emit("response", {"error": "An error occurred while processing your message."})
+        logger.error(f"Error in handle_send_message: {str(e)}")
+        logger.error(traceback.format_exc())
+        emit("response", {"res": {"msg": "I apologize, but I encountered an error while processing your request."}, 
+                         "error": str(e)})
+
+# Added WebSocket event handler for checking voice support
+@socketio.on('check_voice_support')
+def check_voice_support():
+    # Inform clients that voice support is not available
+    emit("voice_support", False)
+
+@app.route('/generate-summary', methods=['OPTIONS'])
+def handle_generate_summary_options():
+    response = jsonify({'status': 'ok'})
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'POST')
+    return response
+
+@app.route('/download-summary', methods=['OPTIONS'])
+def handle_download_summary_options():
+    response = jsonify({'status': 'ok'})
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'POST')
+    return response
 
 @app.after_request
 def add_cors_headers(response):

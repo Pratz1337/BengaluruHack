@@ -2,24 +2,20 @@ import re
 from io import BytesIO
 from datetime import datetime
 from flask import Blueprint, jsonify, request, send_file
+from flask_cors import CORS
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.colors import HexColor
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 
 # Blueprint for summary-related routes
 summary_bp = Blueprint('summary', __name__)
+CORS(summary_bp)  # Apply CORS directly to the blueprint
 
-# Initialize the ChatGoogleGenerativeAI model
-summary_llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
-    temperature=0.5,  # Adjust the temperature for more creative summaries
-    max_tokens=800,   # Adjust the token length for your summaries
-    timeout=None,
-    max_retries=2,
-    google_api_key="AIzaSyDPMDPp221VN3OznFnYj74ga0gDCPVxbEA"
-)
+# Initialize the Groq model to match chat_model.py
+GROQ_API_KEY = "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"
+summary_llm = ChatGroq(model="llama-3.2-90b-vision-preview", temperature=0.4, api_key=GROQ_API_KEY)
 
 def clean_summary(raw_summary):
     # Replace headings '##' with a formatted title
@@ -32,6 +28,7 @@ def clean_summary(raw_summary):
     clean_text = re.sub(r"\*\s*", "- ", clean_text)
 
     return clean_text
+
 def format_summary_for_chat(summary):
     summary = clean_summary(summary)
     lines = summary.split('\n')
@@ -52,7 +49,8 @@ def format_summary_for_chat(summary):
         else:
             formatted_content.append(stripped_line)
 
-    return "\n".join(formatted_content) 
+    return "\n".join(formatted_content)
+
 @summary_bp.route('/generate-summary', methods=['POST'])
 def generate_summary():
     data = request.json
@@ -66,56 +64,63 @@ def generate_summary():
     for message in conversation_history:
         formatted_conversation += f"User: {message['user']}\nBot: {message['bot']}\n\n"
 
-    # Create the dramatic-style prompt for summarization
+    # Create the financial advisor summarization prompt
     prompt = f"""
+As an AI specialized in providing financial and loan advice as "FinMate", create a structured summary of the following conversation in a professional style. Focus on the financial information, loan details, and advice provided.
 
-As an AI specialized in providing student assistance and college-related information for EduMitra, create a structured summary of the following conversation in a style suitable for educational purposes. Use the format below:
 Conversation to summarize:
 {formatted_conversation}
+
 Please structure the summary as follows:
 
 ### **Introduction**
-- Briefly introduce the context of the conversation and the primary focus areas discussed.
+- Briefly introduce the context of the conversation and the primary financial topics discussed.
 
-### **Main Topics Discussed**
-- List the key subjects covered during the conversation.
+### **Main Financial Topics Discussed**
+- List the key financial subjects covered during the conversation.
 - Use bullet points for clarity.
 
-### **Detailed Information**
-- For each main topic, provide:
-  - Sub-bullets with key facts, data, or explanations discussed.
-  - Specific details about college names, courses, fees, scholarships, or other aspects.
-  - Include numerical data, rankings, or relevant cutoffs where mentioned.
+### **Loan Information**
+- For each loan type discussed, provide:
+  - Interest rates mentioned
+  - Eligibility criteria
+  - Repayment options
+  - Documentation requirements
+  - Include numerical data where mentioned (e.g., interest percentages, loan amounts, terms)
 
-### **Key Takeaways**
-- Summarize the most critical points or conclusions from the discussion.
+### **Financial Advice Provided**
+- Summarize the financial recommendations and guidance given
+- Include any credit score advice, saving tips, or investment guidance
+- Highlight strategies suggested for financial management
+
+### **Key Financial Takeaways**
+- Summarize the most important financial points or conclusions from the discussion.
 
 ### **Next Steps (if applicable)**
-- List any recommended actions or follow-up steps suggested during the conversation.
+- List any recommended financial actions or follow-up steps suggested during the conversation.
 
 ### **Conclusion**
-- Provide a concise closing statement summarizing the overall discussion.
-
-
+- Provide a concise closing statement summarizing the overall financial discussion.
 
 NOTE---->
 - Structure the response using markdown syntax to ensure readability (e.g., headers, lists).
 - Use clear, professional, and user-friendly language.
-- Incorporate any numerical data, scores, or rankings if mentioned in the conversation.
-- Ensure information about colleges or courses is accurate and contextually relevant.
+- Incorporate any numerical data, interest rates, or loan terms if mentioned in the conversation.
+- Ensure financial information is accurate and contextually relevant.
 - Use formatting elements such as **bold**, *italic*, or `code` for emphasis where appropriate.
-- Present all data clearly and avoid any unrelated information.
+- Present all financial data clearly and avoid any unrelated information.
 """
 
-    # Call the Gemini LLM to generate the summary
+    # Call the Groq LLM to generate the summary
     try:
         summary_response = summary_llm.invoke(prompt)
 
-        # Assuming the response is an AIMessage object, extract the content appropriately
+        # Extract the content appropriately
         if hasattr(summary_response, 'content'):
             summary_text = summary_response.content 
         else:
             summary_text = str(summary_response)  # Fallback to string conversion
+        
         # Add the summary to the response
         return jsonify({
             "summary": summary_text,
@@ -123,21 +128,22 @@ NOTE---->
         })
     except Exception as e:
         return jsonify({"error": f"Failed to generate summary: {str(e)}"}), 500
+
 def format_summary(summary):
     styles = getSampleStyleSheet()
     
-    # Modify existing styles instead of adding new ones
+    # Modify existing styles with financial theme colors (#00466E deep blue for finance)
     styles['Title'].fontName = "Helvetica-Bold"
     styles['Title'].fontSize = 24
     styles['Title'].spaceAfter = 30
     styles['Title'].alignment = 1  # Center alignment
-    styles['Title'].textColor = HexColor("#000066")
+    styles['Title'].textColor = HexColor("#00466E")
     
     styles['Heading1'].fontName = "Helvetica-Bold"
     styles['Heading1'].fontSize = 18
     styles['Heading1'].spaceBefore = 20
     styles['Heading1'].spaceAfter = 10
-    styles['Heading1'].textColor = HexColor("#000066")
+    styles['Heading1'].textColor = HexColor("#00466E")
     
     styles['Normal'].fontName = "Helvetica"
     styles['Normal'].fontSize = 12
@@ -145,7 +151,7 @@ def format_summary(summary):
     styles['Normal'].spaceBefore = 6
     styles['Normal'].spaceAfter = 6
     
-    # Add only the custom bullet style which doesn't exist
+    # Add bullet style
     styles.add(ParagraphStyle(
         'BulletPoint',
         parent=styles['Normal'],
@@ -161,7 +167,7 @@ def format_summary(summary):
         return text
 
     story = []
-    story.append(Paragraph("EduMitra Conversation Summary", styles['Title']))
+    story.append(Paragraph("FinMate Conversation Summary", styles['Title']))
     story.append(Spacer(1, 30))
     
     sections = summary.split('###')
@@ -189,7 +195,7 @@ def format_summary(summary):
                     current_list_items.append(
                         ListItem(
                             Paragraph(item_text, styles['BulletPoint']),
-                            bulletColor=HexColor("#000066")
+                            bulletColor=HexColor("#00466E")
                         )
                     )
                 else:
@@ -250,7 +256,7 @@ def download_summary():
         return send_file(
             buffer,
             as_attachment=True,
-            download_name=f'EduMitra_Summary_{datetime.now().strftime("%Y%m%d_%H%M")}.pdf',
+            download_name=f'FinMate_Summary_{datetime.now().strftime("%Y%m%d_%H%M")}.pdf',
             mimetype='application/pdf'
         )
         
