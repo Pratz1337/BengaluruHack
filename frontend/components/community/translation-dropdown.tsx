@@ -12,37 +12,32 @@ import {
 import { Button } from "@/components/ui/button"
 import { Globe, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { type SupportedLanguage, languageNames, translateText } from "@/lib/translation-service"
+import { translateText } from "@/lib/translation-service"
+import { type SupportedLanguage, languageNames } from "@/lib/translation-types"
 
 type TranslationDropdownProps = {
   text: string
   originalLanguage?: SupportedLanguage
+  onTranslated?: (translatedText: string) => void
 }
 
-export default function TranslationDropdown({ text, originalLanguage = "en" }: TranslationDropdownProps) {
+export default function TranslationDropdown({ text, originalLanguage = "en", onTranslated }: TranslationDropdownProps) {
   const [isTranslating, setIsTranslating] = useState(false)
-  const [translatedText, setTranslatedText] = useState<string | null>(null)
-  const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>(originalLanguage)
+  const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage | null>(null)
   const { toast } = useToast()
 
   const handleTranslate = async (targetLanguage: SupportedLanguage) => {
-    if (currentLanguage === targetLanguage) {
-      // If already in this language, do nothing
-      return
-    }
+    if (isTranslating) return
 
     setIsTranslating(true)
 
     try {
-      // If we're going back to original, just reset
-      if (targetLanguage === originalLanguage) {
-        setTranslatedText(null)
-        setCurrentLanguage(originalLanguage)
-        return
+      const result = await translateText(text, originalLanguage, targetLanguage)
+
+      if (onTranslated) {
+        onTranslated(result)
       }
 
-      const result = await translateText(text, originalLanguage, targetLanguage)
-      setTranslatedText(result)
       setCurrentLanguage(targetLanguage)
 
       toast({
@@ -50,7 +45,7 @@ export default function TranslationDropdown({ text, originalLanguage = "en" }: T
         description: `Translated to ${languageNames[targetLanguage]}`,
       })
     } catch (error) {
-      console.error("Translation error:", error)
+      console.error("Translation failed:", error)
       toast({
         title: "Translation failed",
         description: "Could not translate the text. Please try again.",
@@ -62,49 +57,27 @@ export default function TranslationDropdown({ text, originalLanguage = "en" }: T
   }
 
   return (
-    <div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            {isTranslating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuLabel>Translate to</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {Object.entries(languageNames).map(([code, name]) => (
-            <DropdownMenuItem
-              key={code}
-              onClick={() => handleTranslate(code as SupportedLanguage)}
-              className={currentLanguage === code ? "bg-purple-50 text-purple-600 font-medium" : ""}
-            >
-              {name}
-              {currentLanguage === code && " (current)"}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {translatedText && (
-        <div className="mt-2 p-3 bg-gray-50 rounded-md border border-gray-200">
-          <div className="flex justify-between items-center mb-1">
-            <span className="text-xs text-gray-500">Translated to {languageNames[currentLanguage]}</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs"
-              onClick={() => {
-                setTranslatedText(null)
-                setCurrentLanguage(originalLanguage)
-              }}
-            >
-              Show original
-            </Button>
-          </div>
-          <p>{translatedText}</p>
-        </div>
-      )}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="icon" disabled={isTranslating}>
+          {isTranslating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>Translate to</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {Object.entries(languageNames).map(([code, name]) => (
+          <DropdownMenuItem
+            key={code}
+            onClick={() => handleTranslate(code as SupportedLanguage)}
+            className={currentLanguage === code ? "bg-purple-50 text-purple-600 font-medium" : ""}
+          >
+            {name}
+            {currentLanguage === code && " (current)"}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

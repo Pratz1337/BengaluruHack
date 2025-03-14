@@ -1,27 +1,6 @@
 "use server"
 
-export type SupportedLanguage =
-  | "en" // English
-  | "hi" // Hindi
-  | "ta" // Tamil
-  | "te" // Telugu
-  | "bn" // Bengali
-  | "mr" // Marathi
-  | "kn" // Kannada
-  | "ml" // Malayalam
-  | "gu" // Gujarati
-
-export const languageNames: Record<SupportedLanguage, string> = {
-  en: "English",
-  hi: "Hindi",
-  ta: "Tamil",
-  te: "Telugu",
-  bn: "Bengali",
-  mr: "Marathi",
-  kn: "Kannada",
-  ml: "Malayalam",
-  gu: "Gujarati",
-}
+import type { SupportedLanguage } from "./translation-types"
 
 export async function translateText(
   text: string,
@@ -33,13 +12,17 @@ export async function translateText(
     return text
   }
 
-  const apiKey = process.env.SARVAM_API_KEY
+  const apiKey = 'b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf'
 
   if (!apiKey) {
     throw new Error("SARVAM_API_KEY is not defined")
   }
 
   const url = "https://api.sarvam.ai/translate"
+
+  // Convert language codes to Sarvam API format
+  const sourceLanguageCode = `${sourceLanguage}-IN`
+  const targetLanguageCode = `${targetLanguage}-IN`
 
   // Split text into chunks of 900 characters (leaving room for overhead)
   const chunks = []
@@ -52,8 +35,8 @@ export async function translateText(
   for (const chunk of chunks) {
     const payload = {
       input: chunk,
-      source_language_code: sourceLanguage,
-      target_language_code: targetLanguage,
+      source_language_code: sourceLanguageCode,
+      target_language_code: targetLanguageCode,
       mode: "formal",
       enable_preprocessing: true,
     }

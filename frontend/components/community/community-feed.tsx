@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils"
 import NewThreadModal from "@/components/community/new-thread-modal"
 import TranslationDropdown from "@/components/community/translation-dropdown"
 import { useToast } from "@/hooks/use-toast"
+import { SupportedLanguage } from "@/lib/translation-types"
+import { translateText } from "@/lib/translation-service"
 
 // Types for our data
 type Category =
@@ -82,14 +84,58 @@ const THREADS: Thread[] = [
     comments: 41,
   },
 ]
+interface CommunityFeedProps {
+  preferredLanguage: SupportedLanguage;
+  shouldTranslate?: boolean;
+}
 
-export default function CommunityFeed() {
+export default function CommunityFeed({ preferredLanguage, shouldTranslate = false }: CommunityFeedProps) {
   const [activeTab, setActiveTab] = useState<Tab>("latest")
   const [activeCategory, setActiveCategory] = useState<Category>("All")
   const [filteredThreads, setFilteredThreads] = useState<Thread[]>(THREADS)
   const [isNewThreadModalOpen, setIsNewThreadModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const { toast } = useToast()
+  const [translatedContent, setTranslatedContent] = useState<{
+    title?: string;
+    threads?: Record<string, { title: string; content: string }>;
+  }>({});
+
+  // Add effect to translate all content when shouldTranslate changes
+  useEffect(() => {
+    const translateAllContent = async () => {
+      if (!shouldTranslate || preferredLanguage === "en") return;
+      
+      try {
+        // Translate page title
+        const titleResult = await translateText("Community", "en", preferredLanguage);
+        
+        // Translate all threads
+        const threadsTranslations: Record<string, { title: string; content: string }> = {};
+        
+        for (const thread of filteredThreads) {
+          const combinedText = `${thread.title}\n\n${thread.content}`;
+          const translatedText = await translateText(combinedText, "en", preferredLanguage);
+          const [translatedTitle, translatedContent] = translatedText.split('\n\n');
+          
+          threadsTranslations[thread.id] = {
+            title: translatedTitle || thread.title,
+            content: translatedContent || thread.content
+          };
+        }
+        
+        setTranslatedContent({
+          title: titleResult,
+          threads: threadsTranslations
+        });
+        
+      } catch (error) {
+        console.error("Error translating all content:", error);
+      }
+    };
+    
+    translateAllContent();
+  }, [shouldTranslate, preferredLanguage, filteredThreads]);
 
   // Filter threads based on active category
   const handleCategoryChange = (category: Category) => {
@@ -203,7 +249,9 @@ export default function CommunityFeed() {
     <section className="flex-1 p-6">
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-3xl font-bold">Community</h2>
+          <h2 className="text-3xl font-bold">
+            {shouldTranslate && translatedContent.title ? translatedContent.title : "Community"}
+          </h2>
           <Button className="bg-purple-600 hover:bg-purple-700" onClick={() => setIsNewThreadModalOpen(true)}>
             <PlusCircle className="mr-2 h-4 w-4" />
             New Thread
@@ -275,16 +323,16 @@ export default function CommunityFeed() {
           </div>
 
           <TabsContent value="trending" className="space-y-6">
-            <ThreadList threads={filteredThreads} />
+            <ThreadList threads={filteredThreads} translatedContent={translatedContent} shouldTranslate={shouldTranslate} />
           </TabsContent>
           <TabsContent value="latest" className="space-y-6">
-            <ThreadList threads={filteredThreads} />
+            <ThreadList threads={filteredThreads} translatedContent={undefined} shouldTranslate={false} />
           </TabsContent>
           <TabsContent value="popular" className="space-y-6">
-            <ThreadList threads={filteredThreads} />
+            <ThreadList threads={filteredThreads} translatedContent={undefined} shouldTranslate={false} />
           </TabsContent>
           <TabsContent value="saved" className="space-y-6">
-            <ThreadList threads={filteredThreads} />
+            <ThreadList threads={filteredThreads} translatedContent={undefined} shouldTranslate={false} />
           </TabsContent>
         </Tabs>
         <NewThreadModal
@@ -297,9 +345,11 @@ export default function CommunityFeed() {
   )
 }
 
-function ThreadList({ threads }: { threads: Thread[] }) {
+function ThreadList({ threads, translatedContent, shouldTranslate }: { threads: Thread[], translatedContent: any, shouldTranslate: boolean }) {
   const [likedThreads, setLikedThreads] = useState<Record<string, boolean>>({})
   const [threadLikes, setThreadLikes] = useState<Record<string, number>>({})
+  const [translatedThreads, setTranslatedThreads] = useState<Record<string, string | null>>({})
+  const { toast } = useToast()
 
   // Initialize likes from threads
   useEffect(() => {
@@ -347,17 +397,42 @@ function ThreadList({ threads }: { threads: Thread[] }) {
                 className="rounded-full"
               />
               <div className="flex-1">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <Badge
                     variant="outline"
                     className="mb-2 text-purple-600 bg-purple-50 hover:bg-purple-100 border-purple-200"
                   >
                     {thread.category}
                   </Badge>
-                  <TranslationDropdown text={`${thread.title}\n\n${thread.content}`} />
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">Translate</span>
+                    <TranslationDropdown 
+                      text={`${thread.title}\n\n${thread.content}`} 
+                      onTranslated={(translatedText) => {
+                        setTranslatedThreads(prev => ({
+                          ...prev,
+                          [thread.id]: translatedText
+                        }))
+                        toast({
+                          title: "Post translated",
+                          description: "This post has been translated to your preferred language"
+                        })
+                      }}
+                    />
+                  </div>
                 </div>
-                <h3 className="text-xl font-semibold mb-1">{thread.title}</h3>
-                <p className="text-gray-700 mb-3">{thread.content}</p>
+                <h3 className="text-xl font-semibold mb-1">
+                  {translatedThreads[thread.id] ? 
+                    translatedThreads[thread.id]?.split('\n\n')[0] : 
+                    (shouldTranslate && translatedContent.threads?.[thread.id]?.title) || thread.title
+                  }
+                </h3>
+                <p className="text-gray-700 mb-3">
+                  {translatedThreads[thread.id] ? 
+                    translatedThreads[thread.id]?.split('\n\n')[1] : 
+                    (shouldTranslate && translatedContent.threads?.[thread.id]?.content) || thread.content
+                  }
+                </p>
                 <div className="flex items-center text-sm text-gray-500">
                   <span className="font-medium">{thread.author.name}</span>
                   <span className="mx-2">•</span>
