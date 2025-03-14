@@ -24,7 +24,7 @@ class LoanScraper:
             model_name="llama3-70b-8192"  # Using a high-capacity model for financial analysis
         )
         self.mongo_client = MongoClient(mongo_uri)
-        self.db = self.mongo_client["loan_data"]
+        self.db = self.mongo_client["FinMate_Dataset"]
         self.collection = self.db["loan_information"]
         
         # Create text splitter for large documents
@@ -50,6 +50,8 @@ class LoanScraper:
             Return the information in a structured JSON format with these categories as keys.
             For each category, include a 'details' field with extracted text and a 'structured_data' field with parsed values.
             If any information is not found, include it with a value of null.
+            
+            IMPORTANT: Format your response as valid JSON only, with no additional text or explanation.
             """),
             ("human", "{text}")
         ])
@@ -69,7 +71,7 @@ class LoanScraper:
         for url in urls:
             try:
                 print(f"Scraping {url}...")
-                # Configure ScrapingAnt loader
+                # Configure ScrapingAnt loader with correct parameters
                 loader = ScrapingAntLoader(
                     [url],
                     api_key=self.api_key,
@@ -82,22 +84,31 @@ class LoanScraper:
                 )
                 
                 # Load documents
+                print(f"Sending request to ScrapingAnt for {url}...")
                 documents = loader.load()
                 
                 if documents:
                     # Add to results
                     domain = self.get_domain(url)
+                    # Store raw HTML for verification
+                    raw_html = [doc.page_content for doc in documents]
+                    html_sample = raw_html[0][:500] + "..." if raw_html else "No HTML content"
+                    
                     results[domain] = {
                         "url": url,
                         "documents": documents,
+                        "raw_html": raw_html,  # Save raw HTML content
                         "timestamp": datetime.now().isoformat()
                     }
                     print(f"Successfully scraped {url} - found {len(documents)} documents")
+                    print(f"HTML Sample: {html_sample}")
                 else:
                     print(f"No content found for {url}")
             
             except Exception as e:
                 print(f"Error scraping {url}: {str(e)}")
+                import traceback
+                traceback.print_exc()
         
         return results
     
@@ -112,11 +123,27 @@ class LoanScraper:
                 print(f"Analyzing chunk {i+1}/{len(chunks)}...")
                 chain = self.analysis_prompt | self.groq_client
                 chunk_result = chain.invoke({"text": chunk})
-                results.append(chunk_result.content)
+                
+                try:
+                    # Try to parse JSON directly
+                    parsed_json = json.loads(chunk_result.content)
+                    results.append(parsed_json)
+                except json.JSONDecodeError:
+                    # If parsing fails, store as raw text
+                    print(f"JSON parsing failed for chunk {i+1}. Response starts with: {chunk_result.content[:100]}")
+                    results.append({"raw_text": chunk_result.content})
             
             # Combine results
-            combined_result = self.combine_chunk_results(results)
-            return combined_result
+            parsed_results = [r for r in results if isinstance(r, dict) and "raw_text" not in r]
+            if parsed_results:
+                # If we have some properly parsed JSON results
+                return self.combine_chunk_results(parsed_results)
+            else:
+                # If all parsing failed
+                return {
+                    "error": "Failed to parse any analysis results", 
+                    "raw_responses": [r.get("raw_text", str(r)) for r in results]
+                }
         else:
             # Process document directly
             chain = self.analysis_prompt | self.groq_client
@@ -126,50 +153,48 @@ class LoanScraper:
             try:
                 return json.loads(result.content)
             except json.JSONDecodeError:
-                # If JSON parsing fails, return as text
-                return {"raw_analysis": result.content}
+                # Return raw text if parsing fails
+                print(f"JSON parsing failed. Response starts with: {result.content[:100]}")
+                return {"error": "JSON parsing failed", "raw_analysis": result.content}
     
-    def combine_chunk_results(self, results: List[str]) -> Dict[str, Any]:
+    def combine_chunk_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Combine analysis results from multiple chunks"""
-        # Parse JSON results
-        parsed_results = []
+        if not results:
+            return {"error": "No valid results to combine"}
+        
+        # Initialize with categories from the first result
+        combined = {}
+        for key in results[0].keys():
+            combined[key] = {"details": [], "structured_data": {}}
+        
+        # Combine all results
         for result in results:
-            try:
-                parsed = json.loads(result)
-                parsed_results.append(parsed)
-            except json.JSONDecodeError:
-                continue
-        
-        if not parsed_results:
-            return {"error": "Failed to parse any analysis results"}
-        
-        # Combine into a single result
-        combined = {
-            "Loan Interest Rates": {"details": [], "structured_data": {}},
-            "Eligibility Criteria": {"details": [], "structured_data": {}},
-            "Loan Amounts": {"details": [], "structured_data": {}},
-            "Processing Fees": {"details": [], "structured_data": {}},
-            "Repayment Terms": {"details": [], "structured_data": {}},
-            "Comparison Metrics": {"details": [], "structured_data": {}},
-            "EMI Calculations": {"details": [], "structured_data": {}}
-        }
-        
-        for result in parsed_results:
-            for key in combined.keys():
-                if key in result:
-                    # Combine details
-                    if "details" in result[key] and result[key]["details"]:
-                        if isinstance(result[key]["details"], list):
-                            combined[key]["details"].extend(result[key]["details"])
-                        else:
-                            combined[key]["details"].append(result[key]["details"])
-                    
-                    # Combine structured data
-                    if "structured_data" in result[key] and result[key]["structured_data"]:
+            for key in result.keys():
+                if key not in combined:
+                    combined[key] = {"details": [], "structured_data": {}}
+                
+                # Combine details
+                if "details" in result[key]:
+                    if isinstance(result[key]["details"], list):
+                        combined[key]["details"].extend(result[key]["details"])
+                    elif result[key]["details"] is not None:
+                        combined[key]["details"].append(result[key]["details"])
+                
+                # Combine structured data
+                if "structured_data" in result[key] and result[key]["structured_data"]:
+                    structured_data = result[key]["structured_data"]
+                    if isinstance(structured_data, dict):
                         # Merge dictionaries, prioritizing non-null values
-                        for k, v in result[key]["structured_data"].items():
+                        for k, v in structured_data.items():
                             if k not in combined[key]["structured_data"] or combined[key]["structured_data"][k] is None:
                                 combined[key]["structured_data"][k] = v
+                    elif isinstance(structured_data, list):
+                        # If it's a list, append unique items
+                        if not isinstance(combined[key]["structured_data"], list):
+                            combined[key]["structured_data"] = []
+                        for item in structured_data:
+                            if item not in combined[key]["structured_data"]:
+                                combined[key]["structured_data"].append(item)
         
         return combined
     
@@ -181,13 +206,14 @@ class LoanScraper:
             print(f"Processing data from {domain}...")
             domain_results = []
             
-            for document in data["documents"]:
-                print(f"Analyzing document from {domain}...")
+            for i, document in enumerate(data["documents"]):
+                print(f"Analyzing document {i+1}/{len(data['documents'])} from {domain}...")
                 analysis = self.analyze_document(document)
                 
                 domain_results.append({
                     "url": data["url"],
                     "content_length": len(document.page_content),
+                    "raw_html": data["raw_html"][i] if i < len(data["raw_html"]) else None,  # Include raw HTML
                     "analysis": analysis,
                     "metadata": document.metadata
                 })
@@ -237,6 +263,10 @@ class LoanScraper:
         # Step 1: Scrape websites
         scraped_data = self.scrape_websites(urls)
         
+        if not scraped_data:
+            print("No data was scraped. Exiting.")
+            return
+            
         # Step 2: Process and analyze data
         processed_data = self.process_data(scraped_data)
         
