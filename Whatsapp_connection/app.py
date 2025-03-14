@@ -612,45 +612,92 @@ def process_message(message: str, session_id: str) -> str:
 
         return "An error occurred while processing your message."
 
-def send_whatsapp_response(message: str):
-    """Send a formatted response back to WhatsApp in chunks."""
-    MAX_CHUNK_SIZE = 1600  # WhatsApp message character limit
+def format_whatsapp_text(text: str) -> str:
+    """Format text for WhatsApp display with proper styling"""
+    lines = []
+    current_section = []
     
-    # Split the message into chunks while preserving word boundaries
-    words = message.split()
+    # Split text into lines and process each line
+    for line in text.split('\n'):
+        line = line.strip()
+        
+        # Skip empty lines and decorative lines
+        if not line or line.startswith('===') or line.startswith('---'):
+            if current_section:
+                lines.append('\n'.join(current_section))
+                current_section = []
+            continue
+            
+        # Format headings
+        if line.startswith('#'):
+            if current_section:
+                lines.append('\n'.join(current_section))
+                current_section = []
+            line = line.lstrip('#').strip()
+            lines.append(f"\n*{line}*\n")
+            continue
+            
+        # Format bullet points
+        if line.startswith('*') or line.startswith('-'):
+            line = f"• {line.lstrip('*-').strip()}"
+            
+        # Format bold text
+        line = line.replace('**', '*')
+        
+        current_section.append(line)
+    
+    if current_section:
+        lines.append('\n'.join(current_section))
+    
+    # Join sections with proper spacing
+    formatted_text = '\n\n'.join(line for line in lines if line.strip())
+    return formatted_text
+
+def send_whatsapp_response(message: str):
+    """Send a formatted response back to WhatsApp with improved readability."""
+    MAX_CHUNK_SIZE = 1600  # WhatsApp character limit per message
+    
+    # Format the message for WhatsApp
+    formatted_message = format_whatsapp_text(message)
+    
+    # Split into chunks while preserving formatting
     chunks = []
     current_chunk = []
     current_length = 0
     
-    for word in words:
-        if current_length + len(word) + 1 > MAX_CHUNK_SIZE:
-            chunks.append(' '.join(current_chunk))
-            current_chunk = [word]
-            current_length = len(word)
+    for paragraph in formatted_message.split('\n\n'):
+        # If paragraph is too long, split it further
+        if len(paragraph) > MAX_CHUNK_SIZE:
+            words = paragraph.split()
+            for word in words:
+                if current_length + len(word) + 1 > MAX_CHUNK_SIZE:
+                    chunks.append('\n\n'.join(current_chunk))
+                    current_chunk = [word]
+                    current_length = len(word)
+                else:
+                    current_chunk.append(word)
+                    current_length += len(word) + 1
         else:
-            current_chunk.append(word)
-            current_length += len(word) + 1
+            if current_length + len(paragraph) + 2 > MAX_CHUNK_SIZE:
+                chunks.append('\n\n'.join(current_chunk))
+                current_chunk = [paragraph]
+                current_length = len(paragraph)
+            else:
+                current_chunk.append(paragraph)
+                current_length += len(paragraph) + 2
     
     if current_chunk:
-        chunks.append(' '.join(current_chunk))
+        chunks.append('\n\n'.join(current_chunk))
     
-    # Add message counter to chunks if multiple
+    # Add message numbering if multiple chunks
     if len(chunks) > 1:
-        chunks = [f"({i+1}/{len(chunks)}) {chunk}" for i, chunk in enumerate(chunks)]
+        chunks = [f"({i+1}/{len(chunks)})\n\n{chunk.strip()}" for i, chunk in enumerate(chunks)]
     
-    logger.info(f"Splitting response into {len(chunks)} chunks")
-    
-    # Log each chunk before sending
-    for i, chunk in enumerate(chunks):
-        logger.debug(f"Chunk {i+1}: {chunk}")
-    
-    # Create response with all chunks
+    # Create and send response
     resp = MessagingResponse()
     for chunk in chunks:
         resp.message(chunk)
     
-    logger.info("Final response being sent to WhatsApp")
-    logger.info(f"Message being sent to WhatsApp: {message}")
     return str(resp)
 
 if __name__ == '__main__':
