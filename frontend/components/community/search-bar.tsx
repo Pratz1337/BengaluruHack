@@ -34,19 +34,19 @@ export default function SearchBar() {
         const mockResults: SearchResult[] = [
           {
             id: "1",
-            type: "thread",
+            type: "thread" as "thread",
             title: "Budgeting apps for beginners",
             preview: "Looking for recommendations on easy-to-use budgeting apps...",
           },
           {
             id: "2",
-            type: "user",
+            type: "user" as "user",
             title: "Alex Morgan",
             preview: "Finance enthusiast and budget planner",
           },
           {
             id: "3",
-            type: "comment",
+            type: "comment" as "comment",
             title: "Re: Investment strategies",
             preview: "I would recommend starting with index funds before...",
           },

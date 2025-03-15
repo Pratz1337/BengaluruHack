@@ -152,13 +152,13 @@ export default function Home() {
   // Use theme hook
   const { theme, setTheme } = useTheme()
   const isDarkMode = theme === "dark"
-    // Add this function after handleFileUpload
+  // Add this function after handleFileUpload
   const translateDocument = async (targetLanguage: string) => {
     if (!documentInfo || !sessionId) {
       toast.error("No document available to translate")
       return
     }
-  
+
     try {
       setIsFetchingData(true)
       const response = await fetch(`${API_URL}/translate-document`, {
@@ -171,26 +171,28 @@ export default function Home() {
           target_language: targetLanguage,
         }),
       })
-  
+
       const data = await response.json()
-  
+
       if (data.success) {
-        toast.success(`Document translated to ${languages.find(l => l.voice_code === targetLanguage)?.name || targetLanguage}`)
-        
+        toast.success(
+          `Document translated to ${languages.find((l) => l.voice_code === targetLanguage)?.name || targetLanguage}`,
+        )
+
         // Update the document info with new language
         setDocumentInfo({
           ...documentInfo,
           language: targetLanguage,
           has_translation: true,
         })
-        
+
         // Add a message about the translated document
         setMessages((prev) => [
           ...prev,
           {
             id: `doc-${Date.now()}`,
             role: "assistant",
-            content: `I've translated the document "${data.filename}" to ${languages.find(l => l.voice_code === targetLanguage)?.name || targetLanguage}.`,
+            content: `I've translated the document "${data.filename}" to ${languages.find((l) => l.voice_code === targetLanguage)?.name || targetLanguage}.`,
             timestamp: new Date(),
           },
         ])
@@ -236,6 +238,12 @@ export default function Home() {
         socket.emit("check_voice_support")
       })
 
+      // Add this line to listen for audio responses
+      socket.on("audio_response", handleSocketResponse)
+
+      // You already have this line for text responses
+      socket.on("response", handleSocketResponse)
+
       socket.on("voice_support", (supported) => {
         setIsVoiceServerAvailable(!!supported)
         console.log(`Voice support: ${supported ? "Available" : "Unavailable"}`)
@@ -252,8 +260,6 @@ export default function Home() {
         setIsConnected(false)
         toast.error("Connection error. Trying to reconnect...")
       })
-
-      socket.on("response", handleSocketResponse)
 
       socketRef.current = socket
     } catch (error) {
@@ -421,128 +427,52 @@ export default function Home() {
     })
   }
 
-// Update the existing handleFileUpload function
-const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0]
-  if (!file) return
+  // Handle file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
 
-  setDocumentFile(file)
+    setDocumentFile(file)
 
-  // Get current language from state - convert from 'en' to 'en-IN' format
-  const currentLang = languages.find(l => l.code === language)?.voice_code || 'en-IN'
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("chat_id", sessionId)
 
-  const formData = new FormData()
-  formData.append("file", file)
-  formData.append("chat_id", sessionId)
-  formData.append("target_language", currentLang) // Add target language
+    try {
+      setIsFetchingData(true)
+      const response = await fetch(`${API_URL}/upload-document`, {
+        method: "POST",
+        body: formData,
+      })
 
-  try {
-    setIsFetchingData(true)
-    const response = await fetch(`${API_URL}/upload-document`, {
-      method: "POST",
-      body: formData,
-    })
+      const data = await response.json()
 
-    const data = await response.json()
+      if (data.success) {
+        setDocumentInfo(data)
+        toast.success(`Document processed: ${file.name}`)
 
-    if (data.success) {
-      setDocumentInfo(data)
-      toast.success(`Document processed: ${file.name}`)
+        // Add a message about the document
+        const content = `I've analyzed your document: ${file.name}. ${data.document_summary || ""}`
 
-      // Update message to mention language
-      const langName = languages.find(l => l.voice_code === data.language)?.name || 'English'
-      const content = `I've analyzed your document: ${file.name} ${data.has_translation ? `(in ${langName})` : ''}. ${data.document_summary || ""}`
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `doc-${Date.now()}`,
-          role: "assistant",
-          content,
-          timestamp: new Date(),
-        },
-      ])
-    } else {
-      toast.error(`Failed to process document: ${data.error}`)
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `doc-${Date.now()}`,
+            role: "assistant",
+            content,
+            timestamp: new Date(),
+          },
+        ])
+      } else {
+        toast.error(`Failed to process document: ${data.error}`)
+      }
+    } catch (error) {
+      console.error("Error uploading document:", error)
+      toast.error("Error uploading document")
+    } finally {
+      setIsFetchingData(false)
     }
-  } catch (error) {
-    console.error("Error uploading document:", error)
-    toast.error("Error uploading document")
-  } finally {
-    setIsFetchingData(false)
   }
-}// Add this component after your DrawerContent, before the audio element
-{documentInfo && (
-  <Drawer open={isDrawerOpen && !!documentInfo} onOpenChange={setIsDrawerOpen}>
-    <DrawerContent>
-      <DrawerHeader>
-        <DrawerTitle>Document Options</DrawerTitle>
-        <DrawerDescription>
-          {documentInfo.filename} ({documentInfo.pages_processed}/{documentInfo.total_pages} pages)
-        </DrawerDescription>
-      </DrawerHeader>
-      <div className="p-4 space-y-4">
-        {/* Document summary */}
-        <Card>
-          <CardHeader className="py-3">
-            <CardTitle>Document Summary</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm">{documentInfo.document_summary || "No summary available"}</p>
-          </CardContent>
-        </Card>
-
-        {/* Translation options */}
-        <Card>
-          <CardHeader className="py-3">
-            <CardTitle>Document Language</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="mb-2 text-sm">
-              Current: {languages.find(l => l.voice_code === documentInfo.language)?.name || 'English'}
-            </p>
-            
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Translate to:</p>
-              <div className="grid grid-cols-2 gap-2">
-                {languages.map(lang => (
-                  <Button
-                    key={lang.code}
-                    variant="outline"
-                    size="sm"
-                    disabled={lang.voice_code === documentInfo.language || isFetchingData}
-                    onClick={() => translateDocument(lang.voice_code)}
-                  >
-                    {lang.name}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Document metadata */}
-        {documentInfo.extracted_info && Object.keys(documentInfo.extracted_info).length > 0 && (
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle>Extracted Information</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {Object.entries(documentInfo.extracted_info).map(([key, value]) => (
-                  <div key={key} className="flex justify-between">
-                    <span className="font-medium capitalize">{key.replace(/_/g, ' ')}:</span>
-                    <span>{String(value)}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-    </DrawerContent>
-  </Drawer>
-)}
 
   // Download conversation summary
   const downloadSummary = async () => {
@@ -1078,16 +1008,16 @@ const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
 
                   <div className="mt-6 space-y-3">
                     <div className="flex space-x-2">
-                      <Button
-                        onClick={() => {
-                          fileInputRef.current?.click()
-                        }}
+                    <Button
+                      onClick={() => {
+                        fileInputRef.current?.click()
+                      }}
                         className="flex-1"
-                        variant="outline"
-                      >
-                        <Upload className="mr-2 h-4 w-4" /> Upload Document
-                      </Button>
-                      
+                      variant="outline"
+                    >
+                      <Upload className="mr-2 h-4 w-4" /> Upload Document
+                    </Button>
+
                       {documentInfo && (
                         <Button
                           onClick={() => setIsDrawerOpen(true)}
@@ -1099,11 +1029,11 @@ const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
                         </Button>
                       )}
                     </div>
-                  
+
                     <Button onClick={downloadSummary} className="w-full" variant="outline">
                       <Download className="mr-2 h-4 w-4" /> Download Summary
                     </Button>
-                  
+
                     <input
                       type="file"
                       ref={fileInputRef}
@@ -1445,28 +1375,23 @@ const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
 
             <div className="p-4 border-t space-y-3 mt-auto">
               <div className="flex space-x-2">
-                <Button
-                  onClick={() => {
-                    fileInputRef.current?.click()
-                  }}
+              <Button
+                onClick={() => {
+                  fileInputRef.current?.click()
+                }}
                   className="flex-1"
-                  variant="outline"
-                >
-                  <Upload className="mr-2 h-4 w-4" /> Upload Document
-                </Button>
-                
+                variant="outline"
+              >
+                <Upload className="mr-2 h-4 w-4" /> Upload Document
+              </Button>
+
                 {documentInfo && (
-                  <Button
-                    onClick={() => setIsDrawerOpen(true)}
-                    variant="outline"
-                    size="icon"
-                    title="Document options"
-                  >
+                  <Button onClick={() => setIsDrawerOpen(true)} variant="outline" size="icon" title="Document options">
                     <FileText className="h-4 w-4" />
                   </Button>
                 )}
               </div>
-            
+
               <Button onClick={downloadSummary} className="w-full" variant="outline">
                 <Download className="mr-2 h-4 w-4" /> Download Summary
               </Button>
@@ -1474,6 +1399,79 @@ const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
           </div>
         </div>
       </div>
+
+      {/* Document options drawer */}
+      {documentInfo && (
+        <Drawer open={isDrawerOpen && !!documentInfo} onOpenChange={setIsDrawerOpen}>
+          <DrawerContent>
+            <DrawerHeader>
+              <DrawerTitle>Document Options</DrawerTitle>
+              <DrawerDescription>
+                {documentInfo.filename} ({documentInfo.pages_processed}/{documentInfo.total_pages} pages)
+              </DrawerDescription>
+            </DrawerHeader>
+            <div className="p-4 space-y-4">
+              {/* Document summary */}
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle>Document Summary</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm">{documentInfo.document_summary || "No summary available"}</p>
+                </CardContent>
+              </Card>
+
+              {/* Translation options */}
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle>Document Language</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="mb-2 text-sm">
+                    Current: {languages.find((l) => l.voice_code === documentInfo.language)?.name || "English"}
+                  </p>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Translate to:</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {languages.map((lang) => (
+                        <Button
+                          key={lang.code}
+                          variant="outline"
+                          size="sm"
+                          disabled={lang.voice_code === documentInfo.language || isFetchingData}
+                          onClick={() => translateDocument(lang.voice_code)}
+                        >
+                          {lang.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Document metadata */}
+              {documentInfo.extracted_info && Object.keys(documentInfo.extracted_info).length > 0 && (
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle>Extracted Information</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {Object.entries(documentInfo.extracted_info).map(([key, value]) => (
+                        <div key={key} className="flex justify-between">
+                          <span className="font-medium capitalize">{key.replace(/_/g, " ")}:</span>
+                          <span>{String(value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </DrawerContent>
+        </Drawer>
+      )}
 
       {/* Voice mode content */}
       {isVoiceMode && (
