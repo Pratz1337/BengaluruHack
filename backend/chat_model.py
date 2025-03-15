@@ -8,11 +8,12 @@ from langchain.chains import LLMChain
 from langchain_core.tools import tool
 from document_processor import DocumentProcessor
 from vector_search import PineconeRAGPipeline
+from confidence import get_confidence_score
 
 # Load environment variables securely
 GROQ_API_KEY = "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"
 SARVAM_API_KEY = "b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf"  # Your Sarvam API key
-PINECONE_API_KEY ="pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG"  # Replace with your key
+PINECONE_API_KEY = "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG"  # Replace with your key
 
 # Initialize Pinecone RAG Pipeline
 vector_search = PineconeRAGPipeline(
@@ -29,6 +30,7 @@ document_processor = DocumentProcessor(SARVAM_API_KEY)
 # Define memory for chat history
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
+# **Tool Definitions**
 loan_eligibility_schema = [
     ResponseSchema(name="loan_type", description="Type of loan being considered (e.g., home loan, car loan)"),
     ResponseSchema(name="income_requirement", description="Minimum income required for this loan"),
@@ -57,7 +59,6 @@ def check_loan_eligibility(user_info: str) -> dict:
         format_instructions=loan_eligibility_parser.get_format_instructions()
     )
     response = llm.invoke(prompt_with_instructions)
-
     try:
         return loan_eligibility_parser.parse(response.content)
     except Exception as e:
@@ -88,7 +89,6 @@ def guide_loan_application(loan_type: str) -> dict:
         format_instructions=loan_application_parser.get_format_instructions()
     )
     response = llm.invoke(prompt_with_instructions)
-
     try:
         return loan_application_parser.parse(response.content)
     except Exception as e:
@@ -119,7 +119,6 @@ def get_financial_tips(topic: str) -> dict:
         format_instructions=financial_tips_parser.get_format_instructions()
     )
     response = llm.invoke(prompt_with_instructions)
-
     try:
         return financial_tips_parser.parse(response.content)
     except Exception as e:
@@ -156,11 +155,18 @@ def track_financial_goal(goal: str, status: str) -> dict:
         format_instructions=financial_goal_parser.get_format_instructions()
     )
     response = llm.invoke(prompt_with_instructions)
-
     try:
         return financial_goal_parser.parse(response.content)
     except Exception as e:
         return {"error": str(e)}
+
+# **Tools Dictionary**
+tools = {
+    "Loan Eligibility Check": check_loan_eligibility,
+    "Loan Application Guidance": guide_loan_application,
+    "Financial Literacy Tips": get_financial_tips,
+    "Financial Goal Tracking": track_financial_goal
+}
 
 # Define Response Schema for Main FinMate Output
 response_schemas = [
@@ -402,6 +408,7 @@ def extract_loan_info(msg, document_context=""):
     """
     Extracts loan-related information using LangChain's memory and document context.
     Prioritizes vector search results as the main context.
+    Returns both extracted info and the combined context.
     """
     # Get relevant context from vector search
     vector_context = ""
@@ -453,47 +460,40 @@ def extract_loan_info(msg, document_context=""):
         extracted_info = {schema.name: "" for schema in response_schemas}
         extracted_info["result"] = "I apologize, but I couldn't process your request properly. Could you please rephrase your question?"
 
-    return extracted_info
+    return {"extracted_info": extracted_info, "context": combined_context}
 
 def execute_tool_call(tool_name, tool_params):
     """
-    Execute the appropriate tool based on the LLM's decision.
+    Execute the appropriate tool dynamically based on the LLM's decision.
     
     Args:
         tool_name: Name of the tool to call
-        tool_params: Parameters to pass to the tool
+        tool_params: Parameters to pass to the tool (dictionary)
     
     Returns:
-        Tool execution results
+        Tool execution results or error message
     """
-    try:
-        if tool_name == "Loan Eligibility Check":
-            return check_loan_eligibility(tool_params.get("user_info", ""))
-        
-        elif tool_name == "Loan Application Guidance":
-            return guide_loan_application(tool_params.get("loan_type", ""))
-        
-        elif tool_name == "Financial Literacy Tips":
-            return get_financial_tips(tool_params.get("topic", ""))
-        
-        elif tool_name == "Financial Goal Tracking":
-            return track_financial_goal(
-                tool_params.get("goal", ""), 
-                tool_params.get("status", "")
-            )
-        else:
-            return {"error": f"Unknown tool: {tool_name}"}
-    
-    except Exception as e:
-        print(f"Error executing tool {tool_name}: {str(e)}")
-        return {"error": str(e)}
+    if tool_name in tools:
+        tool_func = tools[tool_name]
+        try:
+            # Pass tool_params as keyword arguments to the tool function
+            return tool_func(**tool_params)
+        except TypeError as e:
+            print(f"Invalid parameters for {tool_name}: {str(e)}")
+            return {"error": f"Invalid parameters for {tool_name}: {str(e)}"}
+    else:
+        print(f"Unknown tool: {tool_name}")
+        return {"error": f"Unknown tool: {tool_name}"}
 
 def ChatModel(msg, document_context):
     """
     Processes the user query and provides loan-related information while maintaining chat history.
-    Now incorporates vector search results as part of the context.
+    Uses dynamic tool calling and generic tool result integration.
+    Includes a confidence score for the response.
     """
-    extracted_info = extract_loan_info(msg, document_context)
+    result = extract_loan_info(msg, document_context)
+    extracted_info = result["extracted_info"]
+    combined_context = result["context"]
     
     # Check if we need to make a tool call
     tool_call_needed = extracted_info.get("tool_call", "")
@@ -507,57 +507,33 @@ def ChatModel(msg, document_context):
                 try:
                     tool_parameters = json.loads(tool_parameters)
                 except:
-                    if tool_call_needed == "Loan Eligibility Check":
-                        tool_parameters = {"user_info": msg}
-                    elif tool_call_needed == "Loan Application Guidance":
-                        tool_parameters = {"loan_type": extracted_info.get("loan_type", "General")}
-                    elif tool_call_needed == "Financial Literacy Tips":
-                        tool_parameters = {"topic": msg}
-                    elif tool_call_needed == "Financial Goal Tracking":
-                        tool_parameters = {"goal": msg, "status": "Unknown"}
+                    tool_parameters = {}
             
             tool_result = execute_tool_call(tool_call_needed, tool_parameters)
             print(f"Tool result: {tool_result}")
             
             if isinstance(tool_result, dict) and "error" not in tool_result:
-                if tool_call_needed == "Loan Eligibility Check":
-                    extracted_info["eligibility"] = tool_result.get("eligibility_result", "")
-                    extracted_info["loan_type"] = tool_result.get("loan_type", extracted_info.get("loan_type", ""))
-                    extracted_info["additional_info"] = (
-                        extracted_info.get("additional_info", "") + 
-                        f"\nIncome Requirement: {tool_result.get('income_requirement', '')}" +
-                        f"\nCredit Score: {tool_result.get('credit_score', '')}" +
-                        f"\nEmployment Status: {tool_result.get('employment_status', '')}"
-                    )
-                elif tool_call_needed == "Loan Application Guidance":
-                    extracted_info["additional_info"] = (
-                        f"**Required Documents:**\n{tool_result.get('required_documents', '')}\n\n" +
-                        f"**Application Steps:**\n{tool_result.get('application_steps', '')}\n\n" +
-                        f"**Common Mistakes to Avoid:**\n{tool_result.get('common_mistakes', '')}"
-                    )
-                elif tool_call_needed == "Financial Literacy Tips":
-                    extracted_info["additional_info"] = (
-                        f"**Saving Tips:**\n{tool_result.get('saving_tips', '')}\n\n" +
-                        f"**Credit Score Tips:**\n{tool_result.get('credit_score_tips', '')}\n\n" +
-                        f"**Investment Advice:**\n{tool_result.get('investment_advice', '')}"
-                    )
-                elif tool_call_needed == "Financial Goal Tracking":
-                    extracted_info["additional_info"] = (
-                        f"**Goal Progress:** {tool_result.get('progress_percentage', '')}%\n\n" +
-                        f"**Next Steps:**\n{tool_result.get('next_steps', '')}\n\n" +
-                        f"**Loan Advice:**\n{tool_result.get('loan_advice', '')}"
-                    )
-                    if tool_result.get("next_due_date"):
-                        extracted_info["additional_info"] += f"\n\n**Next Payment Due:** {tool_result.get('next_due_date', '')}"
+                tool_output_str = json.dumps(tool_result, indent=2)
+                extracted_info["additional_info"] = (
+                    extracted_info.get("additional_info", "") +
+                    f"\n\n**Detailed Information from {tool_call_needed}:**\n```json\n{tool_output_str}\n```"
+                )
+            else:
+                extracted_info["additional_info"] = (
+                    extracted_info.get("additional_info", "") +
+                    "\nNote: Could not retrieve detailed information from the tool."
+                )
         except Exception as e:
             print(f"Error in tool execution: {str(e)}")
             extracted_info["additional_info"] = (
                 extracted_info.get("additional_info", "") +
-                "\nNote: Could not retrieve all information."
+                "\nNote: An error occurred while retrieving detailed information."
             )
     
+    # Save to memory
     memory.save_context({"input": msg}, {"output": extracted_info["result"]})
     
+    # Format the final response
     formatted_response = ""
     if extracted_info.get("result"):
         formatted_response += f"{extracted_info['result']}\n\n"
@@ -575,4 +551,13 @@ def ChatModel(msg, document_context):
     if not formatted_response.strip():
         formatted_response = extracted_info.get("result") or "I couldn't process your request."
     
-    return {"res": {"msg": formatted_response}, "info": extracted_info}
+    # Compute confidence score
+    confidence_score = get_confidence_score(msg, combined_context, formatted_response)
+    print(f"Confidence Score: {confidence_score}")
+    return {
+        "res": {
+            "msg": formatted_response,
+            "confidence": confidence_score
+        },
+        "info": extracted_info
+    }

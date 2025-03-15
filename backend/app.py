@@ -518,7 +518,9 @@ def handle_audio_message(data):
         # Process with ChatModel
         response = ChatModel(translated_text, document_context=document_context)
         english_response = response.get("res", {}).get("msg", "I couldn't process your request.")
+        confidence_score = response.get("res", {}).get("confidence", 50)
         logger.info(f"ChatModel Response (English): {english_response}")
+        logger.info(f"Confidence Score: {confidence_score}")
         
         # Translate response back if needed
         if needs_translation:
@@ -539,8 +541,8 @@ def handle_audio_message(data):
             logger.info(f"Successfully generated audio in {current_language}")
         else:
             logger.error("Failed to generate audio")
-        
-        # Send response using the audio_response event that frontend expects
+        print(confidence_score)
+        # Send response with confidence score
         emit('audio_response', {
             'original_text': original_text,
             'english_text': translated_text if needs_translation else original_text,
@@ -548,7 +550,8 @@ def handle_audio_message(data):
             'text': translated_response,
             'audio': audio_data,
             'timestamp': datetime.now().isoformat(),
-            'language': current_language
+            'language': current_language,
+            'confidence': confidence_score
         })
         
     except Exception as e:
