@@ -15,6 +15,9 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import StructuredTool
 
+# Import PineconeRAGPipeline from vector_search.py
+from vector_search import PineconeRAGPipeline
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -53,6 +56,14 @@ class ChatHistory:
 
 chat_history = ChatHistory()
 
+# Initialize PineconeRAGPipeline
+pinecone_api_key = os.getenv("PINECONE_API_KEY")
+if not pinecone_api_key:
+    logger.error("Missing PINECONE_API_KEY environment variable")
+    raise ValueError("PINECONE_API_KEY is required")
+
+pipeline = PineconeRAGPipeline(pinecone_api_key=pinecone_api_key)
+
 # Tools
 def dummy_tool(query: str) -> str:
     """Dummy tool function"""
@@ -73,16 +84,17 @@ llm = ChatGroq(
     api_key=os.getenv("GROQ_API_KEY")
 )
 
-# Agent setup
+# Agent setup with modified system prompt
 system_prompt = """You are a Loan Advisor AI named "FinMate". Your job is to assist users with loan-related queries.
-  
-    *Guidelines:*
-    - Answer *only* questions related to *loans, interest rates, eligibility, repayment plans, and financial advice*.
-    - Do *NOT* discuss non-loan-related topics.
-    - Always provide *concise, structured, and accurate* financial guidance.
-    - If the question is *not about loans*, respond with: "I specialize in loan advisory. How can I assist with your loan needs?"
 
-                                                   ## **Introduction**
+**Guidelines:**
+- Answer *only* questions related to *loans, interest rates, eligibility, repayment plans, and financial advice*.
+- Do *NOT* discuss non-loan-related topics.
+- Always provide *concise, structured, and accurate* financial guidance.
+- If the question is *not about loans*, respond with: "I specialize in loan advisory. How can I assist with your loan needs?"
+- Use the relevant context provided from our financial database to ensure the accuracy and relevance of your responses. Your answers should be primarily based on this context when available.
+
+## **Introduction**
 Welcome to "FinMate," a specialized AI-based loan advisor built to provide detailed financial advice related to loan eligibility, interest rates, repayment plans, and loan application processes. Your purpose is to assist users efficiently and professionally by delivering structured responses in a clear and concise manner.
 
 You are expected to:
@@ -92,7 +104,7 @@ You are expected to:
 - If you cannot answer a question directly, attempt to gather additional information through follow-up questions.
 
 ---
-                                               ## **1. Scope of Responses**
+## **1. Scope of Responses**
 You are strictly programmed to answer queries related to financial and loan-related topics. The following areas are within your scope:
 - **Loan Types**:
     - Home loans
@@ -132,7 +144,7 @@ If a user asks a question outside the defined scope, respond with:
 
 > "I specialize in loan advisory. How can I assist with your loan needs?"
 
-Example:
+**Example:**
 - **User:** "What is the best stock to buy right now?"
 - **Response:**  
     "I specialize in loan advisory. How can I assist with your loan needs?"
@@ -160,13 +172,13 @@ Example:
 ---
 
 ## **3. Data Source and Retrieval**
-1. FinMate has access to a central financial database.
-2. Use the "FETCH DATABASE" tool to retrieve the latest data on:  
+1. FinMate has access to a central financial database via the context provided.
+2. Use the "FETCH DATABASE" tool to retrieve additional data if needed on:  
    - Current loan offerings  
    - Interest rate structures  
    - Eligibility requirements  
    - Repayment options  
-3. If data retrieval fails, state the following:  
+3. If data retrieval fails or context is insufficient, state:  
    "I am unable to retrieve the latest information at the moment. Please check with your bank for more details."
 
 ---
@@ -238,13 +250,14 @@ If the query is unclear or involves multiple data points, ask follow-up question
 
 *User Query:* {input}
 
-    PLEASE USE MARKDOWN WHERE NECESSARY TO MAKE THE TEXT LOOK AS FORMATTED AND STRUCTURED AS POSSIBLE. Try breaking up larger paragraphs into smaller ones or points
-    TRY TO KEEP YOUR REPLIES SHORT AND TO THE POINT AS POSSIBLE
+PLEASE USE MARKDOWN WHERE NECESSARY TO MAKE THE TEXT LOOK AS FORMATTED AND STRUCTURED AS POSSIBLE. Try breaking up larger paragraphs into smaller ones or points
+TRY TO KEEP YOUR REPLIES SHORT AND TO THE POINT AS POSSIBLE
 """
 
+# Modified prompt template to include context
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
-    ("human", "User's original language: {language}. User's question (translated to English): {input}"),
+    ("human", "User's original language: {language}.\n\nRelevant context from our financial database:\n{context}\n\nUser's question (translated to English): {input}"),
     ("placeholder", "{agent_scratchpad}")
 ])
 
@@ -310,10 +323,18 @@ def handle_audio_message(data):
             translated_text = original_text
             logger.info("Text is in English, no translation needed")
         
-        # Process with LLM
+        # Get relevant context from vector search
+        context = pipeline.query_assistant(translated_text, stream=False, verbose=False)
+        context_text = ""
+        if isinstance(context, dict) and context.get('citations'):
+            context_text = "\n\n".join(citation['text'] for citation in context['citations'] if 'text' in citation)
+        logger.info(f"Retrieved context: {context_text[:100]}..." if context_text else "No context retrieved")
+        
+        # Process with LLM using context
         llm_result = agent_executor.invoke({
             "input": translated_text,
-            "language": current_language
+            "language": current_language,
+            "context": context_text
         })
         english_response = llm_result["output"]
         logger.info(f"LLM Response (English): {english_response}")
@@ -496,8 +517,7 @@ def generate_audio(text: str, language: str) -> Optional[str]:
     if not audio_base64_chunks:
         return None
         
-    # Combine audio chunks (this is a simplified approach)
-    # In a production environment, you'd want to properly concatenate the audio files
+    # Combine audio chunks (simplified approach)
     return audio_base64_chunks[0] if len(audio_base64_chunks) == 1 else audio_base64_chunks[0]
 
 def detect_language(audio_base64: str) -> Optional[str]:
@@ -532,7 +552,6 @@ def detect_language(audio_base64: str) -> Optional[str]:
         response.raise_for_status()
         
         result = response.json()
-        # Get language code from STT response
         detected_language = result.get('language_code', 'en-IN')
         
         logger.info(f"Raw STT response: {result}")
@@ -587,10 +606,18 @@ def process_message(message: str, session_id: str) -> str:
         if len(message.split()) <= 2:
             return "Hello! How can I assist with your loan-related queries?"
 
-        # Process with LLM
+        # Get relevant context from vector search
+        context = pipeline.query_assistant(message, stream=False, verbose=False)
+        context_text = ""
+        if isinstance(context, dict) and context.get('citations'):
+            context_text = "\n\n".join(citation['text'] for citation in context['citations'] if 'text' in citation)
+        logger.info(f"Retrieved context: {context_text[:100]}..." if context_text else "No context retrieved")
+
+        # Process with LLM using context
         llm_result = agent_executor.invoke({
             "input": message,
-            "language": "en-IN"
+            "language": "en-IN",
+            "context": context_text
         })
 
         # Ensure Groq returns valid output
@@ -609,7 +636,6 @@ def process_message(message: str, session_id: str) -> str:
 
     except Exception as e:
         logger.error(f"Error processing message for session {session_id}: {str(e)}")
-
         return "An error occurred while processing your message."
 
 def format_whatsapp_text(text: str) -> str:
@@ -702,4 +728,3 @@ def send_whatsapp_response(message: str):
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=8000, debug=True)
-
