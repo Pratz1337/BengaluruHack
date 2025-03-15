@@ -21,6 +21,7 @@ document_processor = DocumentProcessor(SARVAM_API_KEY)
 # Define memory for chat history
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
+# --- Response Schemas ---
 loan_eligibility_schema = [
     ResponseSchema(name="loan_type", description="Type of loan being considered (e.g., home loan, car loan)"),
     ResponseSchema(name="income_requirement", description="Minimum income required for this loan"),
@@ -29,93 +30,17 @@ loan_eligibility_schema = [
     ResponseSchema(name="eligibility_result", description="Final eligibility decision"),
 ]
 
-loan_eligibility_parser = StructuredOutputParser.from_response_schemas(loan_eligibility_schema)
-
-loan_eligibility_prompt = ChatPromptTemplate.from_template("""
-You are a Loan Advisor AI. Help the user determine loan eligibility based on their financial details.
-
-User Details:  
-{user_info}
-
-Response Format:  
-{format_instructions}
-""")
-
-@tool("Loan Eligibility Check")
-def check_loan_eligibility(user_info: str) -> dict:
-    """Determine the user's loan eligibility based on financial details."""
-    prompt_with_instructions = loan_eligibility_prompt.format(
-        user_info=user_info,
-        format_instructions=loan_eligibility_parser.get_format_instructions()
-    )
-    response = llm.invoke(prompt_with_instructions)
-
-    try:
-        return loan_eligibility_parser.parse(response.content)
-    except Exception as e:
-        return {"error": str(e)}
-
 loan_application_schema = [
     ResponseSchema(name="required_documents", description="List of required documents for the loan application"),
     ResponseSchema(name="application_steps", description="Step-by-step guide on how to apply for the loan"),
     ResponseSchema(name="common_mistakes", description="Common mistakes to avoid when applying for a loan"),
 ]
 
-loan_application_parser = StructuredOutputParser.from_response_schemas(loan_application_schema)
-
-loan_application_prompt = ChatPromptTemplate.from_template("""
-You are a Loan Advisor AI. Guide the user through the process of applying for a loan.
-
-Loan Type: {loan_type}
-
-Response Format:  
-{format_instructions}
-""")
-
-@tool("Loan Application Guidance")
-def guide_loan_application(loan_type: str) -> dict:
-    """Guide users through the loan application process, including required documents and steps."""
-    prompt_with_instructions = loan_application_prompt.format(
-        loan_type=loan_type,
-        format_instructions=loan_application_parser.get_format_instructions()
-    )
-    response = llm.invoke(prompt_with_instructions)
-
-    try:
-        return loan_application_parser.parse(response.content)
-    except Exception as e:
-        return {"error": str(e)}
-
 financial_tips_schema = [
     ResponseSchema(name="saving_tips", description="Effective saving strategies"),
     ResponseSchema(name="credit_score_tips", description="How to improve and maintain a good credit score"),
     ResponseSchema(name="investment_advice", description="Basic investment strategies"),
 ]
-
-financial_tips_parser = StructuredOutputParser.from_response_schemas(financial_tips_schema)
-
-financial_tips_prompt = ChatPromptTemplate.from_template("""
-You are a Financial Advisor AI. Provide financial literacy tips to the user.
-
-User Interest: {topic}
-
-Response Format:  
-{format_instructions}
-""")
-
-@tool("Financial Literacy Tips")
-def get_financial_tips(topic: str) -> dict:
-    """Provide financial literacy tips, such as saving strategies or credit score improvement."""
-    prompt_with_instructions = financial_tips_prompt.format(
-        topic=topic,
-        format_instructions=financial_tips_parser.get_format_instructions()
-    )
-    response = llm.invoke(prompt_with_instructions)
-
-    try:
-        return financial_tips_parser.parse(response.content)
-    except Exception as e:
-        return {"error": str(e)}
 
 financial_goal_schema = [
     ResponseSchema(name="goal", description="The financial goal set by the user"),
@@ -127,58 +52,126 @@ financial_goal_schema = [
     ResponseSchema(name="refinancing_guidance", description="Guidance on refinancing options if applicable"),
 ]
 
-financial_goal_parser = StructuredOutputParser.from_response_schemas(financial_goal_schema)
+# --- Tool Definitions ---
+@tool("Loan Eligibility Check")
+def check_loan_eligibility(user_info: str) -> dict:
+    """Determine the user's loan eligibility based on financial details."""
+    prompt_with_instructions = ChatPromptTemplate.from_template("""
+    Analyze user financial details: {user_info}
+    {format_instructions}
+    """).format(
+        user_info=user_info,
+        format_instructions=StructuredOutputParser.from_response_schemas(loan_eligibility_schema).get_format_instructions()
+    )
+    response = llm.invoke(prompt_with_instructions)
+    print(response.content)
+    return StructuredOutputParser.from_response_schemas(loan_eligibility_schema).parse(response.content)
 
-financial_goal_prompt = ChatPromptTemplate.from_template("""
-You are a Financial Goal Advisor AI. Help the user track their financial goals and progress.
+@tool("Loan Application Guidance")
+def guide_loan_application(loan_type: str) -> dict:
+    """Guide users through the loan application process."""
+    prompt_with_instructions = ChatPromptTemplate.from_template("""
+    Provide guidance for {loan_type} application:
+    {format_instructions}
+    """).format(
+        loan_type=loan_type,
+        format_instructions=StructuredOutputParser.from_response_schemas(loan_application_schema).get_format_instructions()
+    )
+    response = llm.invoke(prompt_with_instructions)
+    return StructuredOutputParser.from_response_schemas(loan_application_schema).parse(response.content)
 
-User's Financial Goal: {goal}  
-Current Status: {status}
-
-Response Format:  
-{format_instructions}
-""")
+@tool("Financial Literacy Tips")
+def get_financial_tips(topic: str) -> dict:
+    """Provide financial literacy tips."""
+    prompt_with_instructions = ChatPromptTemplate.from_template("""
+    Provide financial tips about {topic}:
+    {format_instructions}
+    """).format(
+        topic=topic,
+        format_instructions=StructuredOutputParser.from_response_schemas(financial_tips_schema).get_format_instructions()
+    )
+    response = llm.invoke(prompt_with_instructions)
+    return StructuredOutputParser.from_response_schemas(financial_tips_schema).parse(response.content)
 
 @tool("Financial Goal Tracking")
 def track_financial_goal(goal: str, status: str) -> dict:
-    """Help users track financial goals, offer loan advice, and remind them of loan due dates."""
-    prompt_with_instructions = financial_goal_prompt.format(
+    """Track financial goals and provide advice."""
+    prompt_with_instructions = ChatPromptTemplate.from_template("""
+    Track financial goal: {goal}
+    Current status: {status}
+    {format_instructions}
+    """).format(
         goal=goal,
         status=status,
-        format_instructions=financial_goal_parser.get_format_instructions()
+        format_instructions=StructuredOutputParser.from_response_schemas(financial_goal_schema).get_format_instructions()
     )
     response = llm.invoke(prompt_with_instructions)
+    return StructuredOutputParser.from_response_schemas(financial_goal_schema).parse(response.content)
 
-    try:
-        return financial_goal_parser.parse(response.content)
-    except Exception as e:
-        return {"error": str(e)}
+# --- Dynamic Tool Registry ---
+TOOL_REGISTRY = {
+    "Loan Eligibility Check": {
+        "function": check_loan_eligibility,
+        "param_mapping": {
+            "user_info": "Extract financial details like income, credit score, employment status"
+        }
+    },
+    "Loan Application Guidance": {
+        "function": guide_loan_application,
+        "param_mapping": {
+            "loan_type": "Identify loan type from user query or previous context"
+        }
+    },
+    "Financial Literacy Tips": {
+        "function": get_financial_tips,
+        "param_mapping": {
+            "topic": "Detect financial topic from query (saving, credit, investments)"
+        }
+    },
+    "Financial Goal Tracking": {
+        "function": track_financial_goal,
+        "param_mapping": {
+            "goal": "Extract financial goal from user message",
+            "status": "Infer current status from chat history or ask follow-up"
+        }
+    }
+}
 
-# Define Response Schema for Main FinMate Output
+# --- Main Response Schema ---
 response_schemas = [
-    ResponseSchema(name="result", description="Final response to the user's loan-related query"),
+    ResponseSchema(name="result", description="Final response to the user's query"),
     ResponseSchema(name="loan_type", description="Type of loan discussed"),
     ResponseSchema(name="interest_rate", description="Applicable interest rate"),
-    ResponseSchema(name="eligibility", description="Eligibility criteria for the loan"),
-    ResponseSchema(name="repayment_options", description="Available repayment options"),
-    ResponseSchema(name="additional_info", description="Any extra information relevant to the loan"),
-    ResponseSchema(name="tool_call", description="Whether a tool call is needed and which tool to use"),
-    ResponseSchema(name="tool_parameters", description="Parameters to pass to the tool if needed"),
+    ResponseSchema(name="eligibility", description="Eligibility criteria"),
+    ResponseSchema(name="repayment_options", description="Repayment options"),
+    ResponseSchema(name="additional_info", description="Extra information"),
+    ResponseSchema(name="tool_call", description="Which tool to use if needed"),
+    ResponseSchema(name="tool_parameters", description="Parameters for the tool"),
+    ResponseSchema(name="needs_clarification", description="Clarification questions needed", type="list"),
+    ResponseSchema(name="confidence_score", description="Confidence in tool selection 0-1", type="float"),
 ]
 
-# Structured Output Parser for main output
 output_parser = StructuredOutputParser.from_response_schemas(response_schemas)
 
-# Enhanced Loan Advisory Prompt Template with document context and tool awareness
+# --- Enhanced Prompt Template ---
 loan_prompt = ChatPromptTemplate.from_template("""
-You are a Loan Advisor AI named "FinMate". Your job is to assist users with loan-related queries.
-  
-    *Guidelines:*
-    - Answer *only* questions related to *loans, interest rates, eligibility, repayment plans, and financial advice*.
-    - Do *NOT* discuss non-loan-related topics.
-    - Always provide *concise, structured, and accurate* financial guidance.
-    - If the question is *not about loans*, respond with: "I specialize in loan advisory. How can I assist with your loan needs?"
-    - Always provide your response in *structured JSON format*.
+You are a Loan Advisor AI named "FinMate". Assist with loan-related queries only.
+
+*Guidelines:*
+- Answer only loan-related questions
+- Maintain professional tone
+- Support multiple languages
+- Use tools when confident (confidence_score > 0.7)
+- Ask clarification when unsure
+
+*Available Tools:*
+{tool_list}
+
+*Tool Selection Guidelines:*
+1. Eligibility Check: Look for income, credit score, employment details
+2. Application Guidance: Mentions of "apply", "documents", "process"
+3. Financial Tips: Requests for savings/credit advice
+4. Goal Tracking: References to financial targets/progress
 
 *Chat History:*  
 {chat_history}
@@ -207,7 +200,6 @@ You are strictly programmed to answer queries related to financial and loan-rela
     - Gold loans
     - Mortgage loans
     - Debt consolidation loans
-    - Credit card loans
 - **Interest Rates**:
     - Fixed vs. floating interest rates
     - Annual percentage rates (APR)
@@ -383,167 +375,96 @@ To use a tool, specify in your response that a tool call is needed:
 {format_instructions}
 """)
 
-# Create LangChain with Memory
-chain = LLMChain(
-    llm=llm,
-    prompt=loan_prompt,
-    memory=memory
-)
+# --- Core Processing Logic ---
+chain = LLMChain(llm=llm, prompt=loan_prompt, memory=memory)
 
 def extract_loan_info(msg, document_context=""):
-    """
-    Extracts loan-related information using LangChain's memory and document context.
-    Determines if a tool call is needed.
+    """Process query with dynamic context handling."""
+    enhanced_context = f"Tools Available: {', '.join(TOOL_REGISTRY.keys())}\n{document_context}"
     
-    Args:
-        msg: User message
-        document_context: Optional context from parsed documents (as string)
-    """
-    prompt_with_instructions = loan_prompt.format(
+    prompt = loan_prompt.format(
         msg=msg,
         chat_history=memory.load_memory_variables({})["chat_history"],
-        document_context=document_context,
-        format_instructions=output_parser.get_format_instructions()
+        document_context=enhanced_context,
+        format_instructions=output_parser.get_format_instructions(),
+        tool_list=list(TOOL_REGISTRY.keys())
     )
 
-    # Get structured response from LLM
-    response = llm.invoke(prompt_with_instructions)
-
+    response = llm.invoke(prompt)
     print("Raw LLM Response:", response.content)
 
-    # Parse JSON output
+    
     try:
-        extracted_info = output_parser.parse(response.content)
+        return output_parser.parse(response.content)
     except Exception as e:
-        print("Error parsing response:", str(e))
-        extracted_info = {schema.name: "" for schema in response_schemas}
-        extracted_info["result"] = "I apologize, but I couldn't process your request properly. Could you please rephrase your question?"
-
-    return extracted_info
+        print(f"Parsing Error: {str(e)}")
+        return {schema.name: "" for schema in response_schemas}
 
 def execute_tool_call(tool_name, tool_params):
-    """
-    Execute the appropriate tool based on the LLM's decision.
+    """Dynamic tool execution with parameter validation."""
+    if tool_name not in TOOL_REGISTRY:
+        return {"error": f"Tool {tool_name} not registered"}
     
-    Args:
-        tool_name: Name of the tool to call
-        tool_params: Parameters to pass to the tool
+    tool_config = TOOL_REGISTRY[tool_name]
+    validated_params = {}
     
-    Returns:
-        Tool execution results
-    """
-    try:
-        if tool_name == "Loan Eligibility Check":
-            return check_loan_eligibility(tool_params.get("user_info", ""))
-        
-        elif tool_name == "Loan Application Guidance":
-            return guide_loan_application(tool_params.get("loan_type", ""))
-        
-        elif tool_name == "Financial Literacy Tips":
-            return get_financial_tips(tool_params.get("topic", ""))
-        
-        elif tool_name == "Financial Goal Tracking":
-            return track_financial_goal(
-                tool_params.get("goal", ""), 
-                tool_params.get("status", "")
-            )
+    for param, guidance in tool_config["param_mapping"].items():
+        if param not in tool_params:
+            param_prompt = f"""Extract {param} from: {tool_params}
+            Guidance: {guidance}
+            Return ONLY the value."""
+            extracted = llm.invoke(param_prompt).content.strip('"')
+            validated_params[param] = extracted
         else:
-            return {"error": f"Unknown tool: {tool_name}"}
+            validated_params[param] = tool_params[param]
     
-    except Exception as e:
-        print(f"Error executing tool {tool_name}: {str(e)}")
-        return {"error": str(e)}
+    return tool_config["function"](**validated_params)
 
 def ChatModel(msg, document_context):
-    """
-    Processes the user query and provides loan-related information while maintaining chat history.
-    It assumes that document_context is already the pre-processed content from a previously uploaded document.
-    
-    Args:
-        msg: User message
-        document_context: a string containing pre-processed document content (empty string if none)
-    """
-    # Directly use the provided document_context; do NOT default to any parsing logic.
+    """Enhanced chat model with dynamic tool handling."""
     extracted_info = extract_loan_info(msg, document_context)
     
-    # Check if we need to make a tool call
-    tool_call_needed = extracted_info.get("tool_call", "")
-    tool_parameters = extracted_info.get("tool_parameters", {})
+    # Handle clarification requests first
+    if extracted_info.get("needs_clarification"):
+        return {
+            "res": {"msg": "\n".join(extracted_info["needs_clarification"])},
+            "info": extracted_info
+        }
     
+    # Process tool calls when confident
     tool_result = {}
-    if tool_call_needed and tool_call_needed.strip():
-        print(f"Tool call detected: {tool_call_needed}")
-        try:
-            if isinstance(tool_parameters, str):
-                try:
-                    tool_parameters = json.loads(tool_parameters)
-                except:
-                    if tool_call_needed == "Loan Eligibility Check":
-                        tool_parameters = {"user_info": msg}
-                    elif tool_call_needed == "Loan Application Guidance":
-                        tool_parameters = {"loan_type": extracted_info.get("loan_type", "General")}
-                    elif tool_call_needed == "Financial Literacy Tips":
-                        tool_parameters = {"topic": msg}
-                    elif tool_call_needed == "Financial Goal Tracking":
-                        tool_parameters = {"goal": msg, "status": "Unknown"}
-            
-            tool_result = execute_tool_call(tool_call_needed, tool_parameters)
-            print(f"Tool result: {tool_result}")
-            
-            if isinstance(tool_result, dict) and "error" not in tool_result:
-                if tool_call_needed == "Loan Eligibility Check":
-                    extracted_info["eligibility"] = tool_result.get("eligibility_result", "")
-                    extracted_info["loan_type"] = tool_result.get("loan_type", extracted_info.get("loan_type", ""))
-                    extracted_info["additional_info"] = (
-                        extracted_info.get("additional_info", "") + 
-                        f"\nIncome Requirement: {tool_result.get('income_requirement', '')}" +
-                        f"\nCredit Score: {tool_result.get('credit_score', '')}" +
-                        f"\nEmployment Status: {tool_result.get('employment_status', '')}"
-                    )
-                elif tool_call_needed == "Loan Application Guidance":
-                    extracted_info["additional_info"] = (
-                        f"**Required Documents:**\n{tool_result.get('required_documents', '')}\n\n" +
-                        f"**Application Steps:**\n{tool_result.get('application_steps', '')}\n\n" +
-                        f"**Common Mistakes to Avoid:**\n{tool_result.get('common_mistakes', '')}"
-                    )
-                elif tool_call_needed == "Financial Literacy Tips":
-                    extracted_info["additional_info"] = (
-                        f"**Saving Tips:**\n{tool_result.get('saving_tips', '')}\n\n" +
-                        f"**Credit Score Tips:**\n{tool_result.get('credit_score_tips', '')}\n\n" +
-                        f"**Investment Advice:**\n{tool_result.get('investment_advice', '')}"
-                    )
-                elif tool_call_needed == "Financial Goal Tracking":
-                    extracted_info["additional_info"] = (
-                        f"**Goal Progress:** {tool_result.get('progress_percentage', '')}%\n\n" +
-                        f"**Next Steps:**\n{tool_result.get('next_steps', '')}\n\n" +
-                        f"**Loan Advice:**\n{tool_result.get('loan_advice', '')}"
-                    )
-                    if tool_result.get("next_due_date"):
-                        extracted_info["additional_info"] += f"\n\n**Next Payment Due:** {tool_result.get('next_due_date', '')}"
-        except Exception as e:
-            print(f"Error in tool execution: {str(e)}")
-            extracted_info["additional_info"] = (
-                extracted_info.get("additional_info", "") +
-                "\nNote: Could not retrieve all information."
+    if extracted_info.get("confidence_score", 0) > 0.7 and extracted_info.get("tool_call"):
+        tool_name = extracted_info["tool_call"]
+        tool_params = extracted_info.get("tool_parameters", {})
+        
+        if isinstance(tool_params, str):
+            param_prompt = f"""Extract JSON parameters for {tool_name} from:
+            Query: {msg}
+            Expected Parameters: {TOOL_REGISTRY.get(tool_name, {}).get('param_mapping', {})}
+            """
+            tool_params = json.loads(llm.invoke(param_prompt).content)
+        
+        tool_result = execute_tool_call(tool_name, tool_params)
+        print(tool_result)
+        
+        # Merge tool results with response
+        if "error" not in tool_result:
+            extracted_info["additional_info"] = "\n".join(
+                [f"**{k}:** {v}" for k,v in tool_result.items()]
             )
     
+    # Format final response
     memory.save_context({"input": msg}, {"output": extracted_info["result"]})
     
-    formatted_response = ""
-    if extracted_info.get("result"):
-        formatted_response += f"{extracted_info['result']}\n\n"
-    if extracted_info.get("loan_type"):
-        formatted_response += f"**Loan Type:** {extracted_info['loan_type']}\n\n"
-    if extracted_info.get("interest_rate"):
-        formatted_response += f"**Interest Rate:** {extracted_info['interest_rate']}\n\n"
-    if extracted_info.get("eligibility"):
-        formatted_response += f"**Eligibility:** {extracted_info['eligibility']}\n\n"
-    if extracted_info.get("repayment_options"):
-        formatted_response += f"**Repayment Options:** {extracted_info['repayment_options']}\n\n"
+    response_parts = []
+    for field in ["result", "loan_type", "interest_rate", "eligibility", "repayment_options"]:
+        if extracted_info.get(field):
+            response_parts.append(f"**{field.title()}:** {extracted_info[field]}")
+    
     if extracted_info.get("additional_info"):
-        formatted_response += f"**Additional Information:**\n{extracted_info['additional_info']}"
-    
-    if not formatted_response.strip():
-        formatted_response = extracted_info.get("result") or "I couldn't process your request."
-    
-    return {"res": {"msg": formatted_response}, "info": extracted_info}
+        response_parts.append(f"**Additional Info:**\n{extracted_info['additional_info']}")
+    print(response_parts)
+    return {
+        "res": {"msg": "\n\n".join(response_parts)},
+        "info": extracted_info
+    }
