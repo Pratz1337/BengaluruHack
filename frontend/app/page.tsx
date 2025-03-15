@@ -1,18 +1,11 @@
-import HeroSection from "@/components/loan-advisor/hero-section"
-import FeatureSection from "@/components/loan-advisor/feature-section"
-import UspSection from "@/components/loan-advisor/usp-section"
-import TechStack from "@/components/loan-advisor/tech-stack"
-import CtaSection from "@/components/loan-advisor/cta-section"
+import { AuthGuard } from "@/components/auth/auth-guard"
+import LandingPage from "./landing-page"
 
-export default function LandingPage() {
+export default function Home() {
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950">
-      <HeroSection />
-      <FeatureSection />
-      <UspSection />
-      <TechStack />
-      <CtaSection />
-    </div>
+    <AuthGuard requireAuth={false}>
+      <LandingPage />
+    </AuthGuard>
   )
 }
 
