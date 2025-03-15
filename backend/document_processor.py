@@ -1,13 +1,12 @@
 import os
 import re
-from typing import Dict, Any, List
-
 import requests
-from parse import SarvamDocumentParser
+import base64
+import json
+from typing import Dict, Any, Optional
+from parse import SarvamDocumentParser  # Import the SarvamDocumentParser class
 
 class DocumentProcessor:
-    """Process documents and extract their content for the chatbot."""
-    
     def __init__(self, api_key: str):
         """
         Initialize with Sarvam API key.
@@ -15,10 +14,11 @@ class DocumentProcessor:
         Args:
             api_key: Sarvam API subscription key
         """
-        self.api_key = api_key
-        self.parser = SarvamDocumentParser(api_key)
-        self.document_cache = {}  # Add a cache to store processed documents
-    
+        self.api_key = "b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf"
+        self.translate_url = "https://api.sarvam.ai/parse/translatepdf"
+        self.document_cache = {}  # Add this line to initialize the document cache
+        self.parser = SarvamDocumentParser(api_key)  # Initialize the parser attribute
+
     def clean_xml_content(self, content: str) -> str:
         """
         Remove XML/HTML tags from content for better LLM processing.
@@ -54,7 +54,78 @@ class DocumentProcessor:
             clean_text = clean_text.replace(entity, replacement)
         
         return clean_text
-    
+
+    def translate_pdf(
+        self,
+        file_content: bytes,
+        filename: str,
+        target_lang: str,
+        page_number: str = "1",
+        hard_translate_dict: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Translate a PDF document using Sarvam AI's endpoint.
+        
+        Args:
+            file_content: The content of the PDF file as bytes.
+            filename: The name of the PDF file.
+            target_lang: The target language code (e.g., 'hi-IN', 'ta-IN').
+            page_number: The page number to translate (default is "1" for the entire document).
+            hard_translate_dict: A dictionary of words for which you want to hardcode the translation.
+        
+        Returns:
+            Dictionary with the translated PDF content or error message.
+        """
+        headers = {
+            "api-subscription-key": self.api_key,
+        }
+
+        files = {
+            "pdf": (filename, file_content, "application/pdf"),
+        }
+
+        data = {
+            "page_number": page_number,
+            "input_lang": "en-IN",  # Assuming the input is always in English
+            "output_lang": target_lang,
+        }
+
+        if hard_translate_dict:
+            data["hard_translate_dict"] = json.dumps(hard_translate_dict)
+
+        try:
+            response = requests.post(
+                self.translate_url, headers=headers, files=files, data=data
+            )
+            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+
+            response_data = response.json()
+            translated_pdf_base64 = response_data.get("translated_pdf")
+
+            if translated_pdf_base64:
+                # Decode the base64 PDF content
+                translated_pdf = base64.b64decode(translated_pdf_base64)
+                return {
+                    "success": True,
+                    "translated_pdf": translated_pdf,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "No translated PDF content received",
+                }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                "success": False,
+                "error": f"Request error: {str(e)}",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error translating PDF: {str(e)}",
+            }
+        
     def process_document(self, file_path: str, max_pages: int = 5) -> Dict[str, Any]:
         """
         Process a document and extract text from multiple pages.
@@ -137,67 +208,3 @@ class DocumentProcessor:
             "extracted_info": extracted,
             "document_summary": brief_summary
         }
-    
-    def translate_document_content(self, content: str, target_language: str) -> Dict[str, Any]:
-        """
-        Translate document content to the target language.
-        
-        Args:
-            content: Extracted document content text
-            target_language: Target language code (e.g., 'hi-IN', 'ta-IN')
-            
-        Returns:
-            Dictionary with original and translated content
-        """
-        url = "https://api.sarvam.ai/translate"
-        
-        headers = {
-            "Content-Type": "application/json",
-            "api-subscription-key": self.api_key
-        }
-        
-        # Use English as default source language for documents
-        source_language = "en-IN"
-        
-        # Skip translation if target is English
-        if target_language == "en-IN":
-            return {
-                "success": True,
-                "original_content": content,
-                "translated_content": content,
-                "source_language": source_language,
-                "target_language": target_language
-            }
-        
-        # Split content into manageable chunks (900 chars max)
-        chunks = [content[i:i+900] for i in range(0, len(content), 900)]
-        translated_chunks = []
-        
-        for chunk in chunks:
-            payload = {
-                "input": chunk,
-                "source_language_code": source_language,
-                "target_language_code": target_language,
-                "mode": "formal",
-                "enable_preprocessing": True
-            }
-            
-            try:
-                response = requests.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                result = response.json()
-                translated_chunks.append(result.get('translated_text', chunk))
-            except Exception as e:
-                # Fall back to original chunk on error
-                translated_chunks.append(chunk)
-        
-        translated_content = ' '.join(translated_chunks)
-        
-        return {
-            "success": True,
-            "original_content": content,
-            "translated_content": translated_content,
-            "source_language": source_language,
-            "target_language": target_language
-        }
-

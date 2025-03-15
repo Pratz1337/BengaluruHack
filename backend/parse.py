@@ -251,6 +251,31 @@ def parse_document(file_path: str, api_key: str, max_pages: int = 5) -> Dict[str
     """
     parser = SarvamDocumentParser(api_key)
     return parser.parse_pdf_multiple_pages(file_path, max_pages=max_pages)
+def translate_pdf(self, file_content: bytes, filename: str, target_lang: str) -> Dict[str, Any]:
+    """Translate a PDF document using Sarvam AI's endpoint"""
+    url = "https://api.sarvam.ai/parse/translatepdf"
+    
+    headers = {
+        "api-subscription-key": self.api_key
+    }
+    
+    files = {
+        "pdf": (filename, file_content, "application/pdf")
+    }
+    
+    data = {
+        "page_number": "1",  # Translate all pages
+        "input_lang": "en-IN",
+        "output_lang": target_lang
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, files=files, data=data)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    
 # Example usage
 if __name__ == "__main__":
     # Install requirements first

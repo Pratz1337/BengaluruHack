@@ -627,46 +627,34 @@ def handle_download_summary_options():
 
 @app.route('/translate-document', methods=['POST'])
 def translate_document():
-    data = request.json
-    chat_id = data.get('chat_id', 'default')
-    target_language = data.get('target_language', 'en-IN')
-    
-    if chat_id not in processed_documents:
-        return jsonify({"error": "No document found for this session"}), 404
-    
-    doc_info = processed_documents[chat_id]
-    
-    # Check if already translated to this language
-    if doc_info.get("language") == target_language and doc_info.get("translated_content"):
-        return jsonify({
-            "success": True,
-            "already_translated": True,
-            "language": target_language
-        })
-    
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+    target_lang = request.form.get("target_lang", "hi-IN")
+    page_number = request.form.get("page_number", "1")
+
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
     try:
-        # Translate the document content
-        translation_result = document_processor.translate_document_content(
-            doc_info["content"], 
-            target_language
+        file_content = file.read()
+        result = document_processor.translate_pdf(
+            file_content=file_content,
+            filename=file.filename,
+            target_lang=target_lang,
+            page_number=page_number,
         )
-        
-        if translation_result["success"]:
-            # Update the processed document with translated content
-            processed_documents[chat_id]["translated_content"] = translation_result["translated_content"]
-            processed_documents[chat_id]["language"] = target_language
-            
-            return jsonify({
-                "success": True,
-                "language": target_language,
-                "filename": doc_info["file_name"]
-            })
+
+        if result["success"]:
+            return jsonify({"success": True, "translated_pdf": result["translated_pdf"].decode("latin1")})
         else:
-            return jsonify({"success": False, "error": "Failed to translate document"}), 400
-            
+            return jsonify({"success": False, "error": result["error"]}), 400
+
     except Exception as e:
-        logger.error(f"Error translating document: {str(e)}")
-        return jsonify({"success": False, "error": f"Error translating document: {str(e)}"}), 500
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 
 # CORS headers for all responses
 @app.after_request
