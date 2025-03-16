@@ -238,32 +238,24 @@ def translate_text(text: str, source_language: str, target_language: str) -> str
     return ' '.join(translated_chunks)
 
 def generate_audio(text: str, language: str) -> Optional[str]:
-    """Generate audio using Sarvam AI's TTS service"""
+    """Generate audio using Sarvam AI's TTS service in chunks and combine them."""
     url = "https://api.sarvam.ai/text-to-speech"
     headers = {
         "Content-Type": "application/json",
         "api-subscription-key": SARVAM_API_KEY
     }
     
-    # Map language codes to appropriate speakers
     language_speaker_map = {
-        'hi-IN': 'meera',  # Hindi
-        'en-IN': 'meera',  # English
-        'ta-IN': 'meera',  # Tamil
-        'te-IN': 'meera',  # Telugu
-        'kn-IN': 'meera',  # Kannada
-        'ml-IN': 'meera',  # Malayalam
-        'mr-IN': 'meera',  # Marathi
-        'bn-IN': 'meera',  # Bengali
-        'gu-IN': 'meera',  # Gujarati
+        'hi-IN': 'meera', 'en-IN': 'meera', 'ta-IN': 'meera',
+        'te-IN': 'meera', 'kn-IN': 'meera', 'ml-IN': 'meera',
+        'mr-IN': 'meera', 'bn-IN': 'meera', 'gu-IN': 'meera',
     }
-    
     speaker = language_speaker_map.get(language, 'meera')
     logger.info(f"Using speaker '{speaker}' for language '{language}'")
     
-    # Split text into chunks of 450 characters (TTS limit is 500)
+    # Split text into chunks of 450 characters each (TTS limit is 500)
     chunks = [text[i:i+450] for i in range(0, len(text), 450)]
-    audio_base64_chunks = []
+    audio_bytes_combined = b""
     
     for chunk in chunks:
         payload = {
@@ -273,27 +265,31 @@ def generate_audio(text: str, language: str) -> Optional[str]:
             "enable_preprocessing": True,
             "speech_sample_rate": 22050
         }
-        
         try:
-            logger.info(f"Sending TTS request for language: {language}")
+            logger.info(f"Sending TTS request for chunk (length={len(chunk)})")
             response = requests.post(url, json=payload, headers=headers)
             response.raise_for_status()
             result = response.json()
             audio_chunk = result.get("audios", [None])[0]
-            if (audio_chunk):
-                audio_base64_chunks.append(audio_chunk)
+            if audio_chunk:
+                # Decode the base64 audio chunk and append to combined bytes
+                chunk_bytes = base64.b64decode(audio_chunk)
+                audio_bytes_combined += chunk_bytes
+            else:
+                logger.error("No audio returned for a chunk")
+                return None
         except Exception as e:
             logger.error(f"TTS Error for chunk: {str(e)}")
-            if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e, 'response') and (e.response is not None):
                 logger.error(f"Response content: {e.response.text}")
             return None
-    
-    if not audio_base64_chunks:
+
+    if not audio_bytes_combined:
         return None
-        
-    # Combine audio chunks (this is a simplified approach)
-    # In a production environment, you'd want to properly concatenate the audio files
-    return audio_base64_chunks[0] if len(audio_base64_chunks) == 1 else audio_base64_chunks[0]
+    
+    # Re-encode the combined audio bytes into base64 string
+    combined_audio_base64 = base64.b64encode(audio_bytes_combined).decode("utf-8")
+    return combined_audio_base64
 
 def detect_language(audio_base64: str) -> Optional[str]:
     """Detect language using Sarvam AI"""
@@ -758,40 +754,7 @@ def translate_document():
             os.remove(temp_path)
         return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/save-chat', methods=['POST'])
-def save_chat():
-    try:
-        data = request.json
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
 
-        # Log the received data for debugging
-        logger.info(f"Received data: {data}")
-
-        # Validate required fields
-        required_fields = ["user_id", "message", "loan_type", "timestamp"]
-        for field in required_fields:
-            if field not in data:
-                return jsonify({"error": f"Missing field: {field}"}), 400
-
-        # Save chat to MongoDB
-        chat_entry = {
-            'query': data['message'],
-            'loan_type': data.get('loan_type', 'General'),
-            'timestamp': datetime.fromisoformat(data['timestamp']) if data.get('timestamp') else datetime.utcnow(),
-            'user_id': data.get('user_id')
-        }
-
-        mongo.db.loan_queries.insert_one(chat_entry)
-
-        # Broadcast update to all connected clients
-        socketio.emit('chat_history_updated', broadcast=True)
-
-        return jsonify({"success": True, "message": "Chat saved successfully"}), 200
-
-    except Exception as e:
-        logger.error(f"Error saving chat: {str(e)}")
-        return jsonify({"error": str(e)}), 500
 
 
 # CORS headers for all responses
