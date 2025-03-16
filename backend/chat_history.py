@@ -2,11 +2,19 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_pymongo import PyMongo
 import pymongo
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 chat_history_bp = Blueprint('chat_history', __name__)
 
 def init_app(app):
-    app.config["MONGO_URI"] = "mongodb+srv://kamalkarteek1:rvZSeyVHhgOd2fbE@gbh.iliw2.mongodb.net/FinMate"
+    mongo_uri = os.getenv('MONGO_URI')
+    if not mongo_uri:
+        raise ValueError("MONGO_URI environment variable is not set")
+        
+    app.config["MONGO_URI"] = mongo_uri
     print("[DEBUG] Initializing MongoDB with URI:", app.config["MONGO_URI"])
     mongo.init_app(app)
     print("[DEBUG] MongoDB initialization complete")

@@ -1,13 +1,28 @@
 import json
+import os
+from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
 from langchain_core.tools import tool
 
-# Initialize LLM
-GROQ_API_KEY = "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"
-llm = ChatGroq(model="llama-3.2-90b-vision-preview", temperature=0.4, api_key=GROQ_API_KEY)
+# Load environment variables
+load_dotenv()
 
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    GROQ_API_KEY = get_required_env("GROQ_API_KEY")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
+
+# Initialize LLM with environment variable
+llm = ChatGroq(model="llama-3.2-90b-vision-preview", temperature=0.4, api_key=GROQ_API_KEY)
 
 loan_eligibility_schema = [
     ResponseSchema(name="loan_type", description="Type of loan being considered (e.g., home loan, car loan)"),

@@ -5,6 +5,10 @@ import json
 import re
 import time
 import unicodedata
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # MongoDB connection
 from pymongo import MongoClient
@@ -139,8 +143,6 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Pinecone RAG Pipeline with MongoDB Integration")
-    parser.add_argument('--pinecone-key', type=str, required=True, help='Pinecone API key')
-    parser.add_argument('--mongo-uri', type=str, help='MongoDB connection string (required for vectorize mode)')
     parser.add_argument('--mode', type=str, choices=['vectorize', 'query'], required=True, 
                         help='Mode: vectorize (extract and upload) or query (ask questions)')
     parser.add_argument('--query', type=str, help='Query for the assistant (required in query mode)')
@@ -149,14 +151,21 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
+    # Get configuration from environment variables
+    pinecone_api_key = os.getenv('PINECONE_API_KEY')
+    mongodb_uri = os.getenv('MONGODB_URI')
+    
+    if not pinecone_api_key:
+        raise ValueError("PINECONE_API_KEY environment variable is required")
+    
     # Check if mongo-uri is provided when in vectorize mode
-    if args.mode == 'vectorize' and not args.mongo_uri:
-        parser.error("--mongo-uri is required when using vectorize mode")
+    if args.mode == 'vectorize' and not mongodb_uri:
+        parser.error("MONGODB_URI environment variable is required when using vectorize mode")
     
     # Initialize the pipeline
     pipeline = PineconeRAGPipeline(
-        pinecone_api_key=args.pinecone_key,
-        mongodb_uri=args.mongo_uri if args.mode == 'vectorize' or args.mongo_uri else None,
+        pinecone_api_key=pinecone_api_key,
+        mongodb_uri=mongodb_uri if args.mode == 'vectorize' or mongodb_uri else None,
         max_files=args.max_files
     )
     

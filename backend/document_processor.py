@@ -1,23 +1,97 @@
 import os
+from dotenv import load_dotenv
 import re
 import requests
 import base64
 import json
 from typing import Dict, Any, Optional
-from parse import SarvamDocumentParser  # Import the SarvamDocumentParser class
+from parse import SarvamDocumentParser
+
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    SARVAM_API_KEY = get_required_env("SARVAM_API_KEY")
+except ValueError as e:
+    pass
 
 class DocumentProcessor:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str = None):
         """
-        Initialize with Sarvam API key.
-        
+        Initialize the DocumentProcessor
         Args:
-            api_key: Sarvam API subscription key
+            api_key: Sarvam API key for document translation
         """
-        self.api_key = "b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf"
-        self.translate_url = "https://api.sarvam.ai/parse/translatepdf"
-        self.document_cache = {}  # Add this line to initialize the document cache
-        self.parser = SarvamDocumentParser(api_key)  # Initialize the parser attribute
+        self.supported_formats = ['.pdf', '.txt', '.docx']
+        self.api_key = api_key or SARVAM_API_KEY
+        self.document_cache = {}
+        self.translate_url = "https://api.sarvam.ai/v1/translate"  # Add your actual endpoint
+        try:
+            self.parser = SarvamDocumentParser(self.api_key)
+        except Exception as e:
+            print(f"Warning: Could not initialize parser: {str(e)}")
+            self.parser = None
+    
+    def process_document(self, file_path: str) -> Dict[str, Any]:
+        """
+        Process a document and extract relevant information
+        Args:
+            file_path: Path to the document
+        Returns:
+            Dict containing processed information
+        """
+        try:
+            file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext not in self.supported_formats:
+                raise ValueError(f"Unsupported file format: {file_ext}")
+            
+            # Placeholder for document processing logic
+            # Add specific processing logic based on file type
+            processed_data = {
+                "file_path": file_path,
+                "status": "processed",
+                "content": "Placeholder content"
+            }
+            
+            return processed_data
+            
+        except Exception as e:
+            return {
+                "error": str(e),
+                "status": "failed",
+                "file_path": file_path
+            }
+    
+    def extract_text(self, file_path: str) -> str:
+        """
+        Extract text from a document
+        Args:
+            file_path: Path to the document
+        Returns:
+            Extracted text as string
+        """
+        # Implement text extraction logic here
+        return "Placeholder text extraction"
+    
+    def validate_document(self, file_path: str) -> bool:
+        """
+        Validate if a document is processable
+        Args:
+            file_path: Path to the document
+        Returns:
+            Boolean indicating if document is valid
+        """
+        if not os.path.exists(file_path):
+            return False
+        
+        file_ext = os.path.splitext(file_path)[1].lower()
+        return file_ext in self.supported_formats
 
     def clean_xml_content(self, content: str) -> str:
         """

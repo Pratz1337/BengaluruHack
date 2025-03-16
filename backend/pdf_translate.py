@@ -2,10 +2,26 @@ import requests
 import base64
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    SARVAM_API_KEY = get_required_env("SARVAM_API_KEY")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
 
 def translate_pdf69(input_pdf_path, output_language="hi-IN", page_number=None, 
                   input_language="en-IN", hard_translate_dict=None, 
-                  api_key="your_api_key_here"):
+                  api_key=None):
     """
     Translate a PDF using Sarvam AI's API and save the translated PDF.
     
@@ -23,7 +39,7 @@ def translate_pdf69(input_pdf_path, output_language="hi-IN", page_number=None,
         Language code of the input PDF (default: "en-IN")
     hard_translate_dict : dict, optional
         Dictionary of words with custom translations
-    api_key : str
+    api_key : str, optional
         Your Sarvam AI API subscription key
     
     Returns:
@@ -31,6 +47,9 @@ def translate_pdf69(input_pdf_path, output_language="hi-IN", page_number=None,
     str
         Path to the saved translated PDF file
     """
+    # Use environment variable if no API key provided
+    api_key = api_key or SARVAM_API_KEY
+
     # API endpoint
     url = "https://api.sarvam.ai/parse/translatepdf"
     
@@ -110,14 +129,16 @@ if __name__ == "__main__":
     parser.add_argument("--output-lang", default="hi-IN", help="Output language code")
     parser.add_argument("--page", type=str, help="Specific page to translate (optional)")
     parser.add_argument("--input-lang", default="en-IN", help="Input language code")
-    parser.add_argument("--api-key", required=True, help="Your Sarvam AI API subscription key")
     
     args = parser.parse_args()
     
-    translate_pdf69(
-        args.input_pdf,
-        output_language=args.output_lang,
-        page_number=args.page,
-        input_language=args.input_lang,
-        api_key=args.api_key
-    )
+    try:
+        translate_pdf69(
+            args.input_pdf,
+            output_language=args.output_lang,
+            page_number=args.page,
+            input_language=args.input_lang,
+            api_key=SARVAM_API_KEY
+        )
+    except Exception as e:
+        print(f"Error: {str(e)}")

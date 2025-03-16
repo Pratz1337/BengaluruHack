@@ -5,21 +5,32 @@ import json
 import re
 import time
 import unicodedata
-
-# MongoDB connection
 from pymongo import MongoClient
-
-# Pinecone imports
 from pinecone import Pinecone
 from pinecone_plugins.assistant.models.chat import Message
-
-# Embedding model
 from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    PINECONE_API_KEY = get_required_env("PINECONE_API_KEY")
+    MONGO_URI = get_required_env("MONGO_URI")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
 
 class PineconeRAGPipeline:
     def __init__(
         self,
-        pinecone_api_key: str,
+        pinecone_api_key: str = None,
         mongodb_uri: str = None,
         mongodb_db: str = "FinMate_Dataset",
         mongodb_collection: str = "loan_information",
@@ -27,17 +38,16 @@ class PineconeRAGPipeline:
         max_files: int = 10  # Set a reasonable limit based on your Pinecone plan
     ):
         """Initialize the Pinecone RAG Pipeline with MongoDB integration"""
-        # Initialize Pinecone
-        self.pc = Pinecone(api_key=pinecone_api_key)
+        # Use environment variables if not provided
+        self.pc = Pinecone(api_key=pinecone_api_key or PINECONE_API_KEY)
         self.assistant_name = assistant_name
         self.max_files = max_files
         
-        # Initialize MongoDB connection only if URI is provided
-        if mongodb_uri:
-            self.mongo_client = MongoClient(mongodb_uri)
+        # Initialize MongoDB connection
+        if mongodb_uri or MONGO_URI:
+            self.mongo_client = MongoClient(mongodb_uri or MONGO_URI)
             self.db = self.mongo_client[mongodb_db]
             self.collection = self.db[mongodb_collection]
-            # Initialize embedding model only for vectorization
             self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         else:
             self.mongo_client = None
@@ -329,8 +339,6 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Pinecone RAG Pipeline with MongoDB Integration")
-    parser.add_argument('--pinecone-key', type=str, required=True, help='Pinecone API key')
-    parser.add_argument('--mongo-uri', type=str, help='MongoDB connection string (required for vectorize mode)')
     parser.add_argument('--mode', type=str, choices=['vectorize', 'query'], required=True, 
                         help='Mode: vectorize (extract and upload) or query (ask questions)')
     parser.add_argument('--query', type=str, help='Query for the assistant (required in query mode)')
@@ -339,16 +347,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Check if mongo-uri is provided when in vectorize mode
-    if args.mode == 'vectorize' and not args.mongo_uri:
-        parser.error("--mongo-uri is required when using vectorize mode")
-    
-    # Initialize the pipeline
-    pipeline = PineconeRAGPipeline(
-        pinecone_api_key=args.pinecone_key,
-        mongodb_uri=args.mongo_uri if args.mode == 'vectorize' or args.mongo_uri else None,
-        max_files=args.max_files
-    )
+    # Initialize the pipeline using environment variables
+    pipeline = PineconeRAGPipeline(max_files=args.max_files)
     
     # Run the specified mode
     if args.mode == 'vectorize':

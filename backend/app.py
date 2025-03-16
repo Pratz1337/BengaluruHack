@@ -20,26 +20,52 @@ import requests
 from dotenv import load_dotenv
 from chat_history import chat_history_bp
 
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    SARVAM_API_KEY = get_required_env("SARVAM_API_KEY")
+    PINECONE_API_KEY = get_required_env("PINECONE_API_KEY")
+    GROQ_API_KEY = get_required_env("GROQ_API_KEY")
+    SECRET_KEY = get_required_env("SECRET_KEY")
+    MONGO_URI = get_required_env("MONGO_URI")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Set up configurations from environment variables
+app.config.update(
+    SECRET_KEY=SECRET_KEY,
+    MONGO_URI=MONGO_URI,
+    DEBUG=os.getenv('DEBUG', 'False').lower() == 'true',
+    PORT=int(os.getenv('PORT', 5000)),
+    HOST=os.getenv('HOST', '0.0.0.0')
+)
+
+# Initialize extensions
+socketio = SocketIO(app, cors_allowed_origins="*")
+mongo = PyMongo()
+
 def init_app(app):
     mongo.init_app(app)
-mongo = PyMongo()
-from pdf_translate import translate_pdf69
 
+from pdf_translate import translate_pdf69
 
 # Import our modules
 from document_processor import DocumentProcessor
 from chat_model import ChatModel
 from summary import summary_bp
 from loan_tools import check_loan_eligibility, guide_loan_application, get_financial_tips, track_financial_goal
-
-# Load environment variables
-load_dotenv()
-
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)
-app.secret_key = os.getenv('SECRET_KEY', "your_unique_secret_key")
-socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Register the summary blueprint
 app.register_blueprint(summary_bp)
@@ -48,9 +74,6 @@ processed_documents = {}
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# API Keys
-SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf")
 
 # Initialize document processor
 document_processor = DocumentProcessor(SARVAM_API_KEY)
@@ -594,8 +617,8 @@ def check_voice_support():
 @app.route('/interest-rates', methods=['GET'])
 def get_interest_rates():
     try:
-        # Initialize Pinecone with API key
-        pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG")
+        # Initialize Pinecone with API key from environment
+        pinecone_api_key = get_required_env("PINECONE_API_KEY")
         vector_search = PineconeRAGPipeline(
             pinecone_api_key=pinecone_api_key,
             assistant_name="finmate-assistant"
@@ -839,8 +862,8 @@ def get_financial_tools():
 @app.route('/api/interest-rates', methods=['GET'])
 def get_api_interest_rates():
     try:
-        # Initialize Pinecone with your API key
-        pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG")
+        # Initialize Pinecone with API key from environment
+        pinecone_api_key = get_required_env("PINECONE_API_KEY")
         vector_search = PineconeRAGPipeline(
             pinecone_api_key=pinecone_api_key,
             assistant_name="finmate-assistant"
@@ -880,5 +903,8 @@ def get_api_interest_rates():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+    debug_mode = os.getenv('DEBUG', 'False').lower() == 'true'
+    port = int(os.getenv('PORT', 5000))
+    host = os.getenv('HOST', '0.0.0.0')
+    socketio.run(app, debug=debug_mode, host=host, port=port)
 

@@ -1,5 +1,6 @@
 import json
 import os
+from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
@@ -10,10 +11,23 @@ from document_processor import DocumentProcessor
 from vector_search import PineconeRAGPipeline
 from confidence import get_confidence_score
 
-# Load environment variables securely
-GROQ_API_KEY = "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"
-SARVAM_API_KEY = "b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf"  # Your Sarvam API key
-PINECONE_API_KEY = "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG"  # Replace with your key
+# Load environment variables
+load_dotenv()
+
+# Get API keys from environment variables with error handling
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    GROQ_API_KEY = get_required_env("GROQ_API_KEY")
+    SARVAM_API_KEY = get_required_env("SARVAM_API_KEY")
+    PINECONE_API_KEY = get_required_env("PINECONE_API_KEY")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
 
 # Initialize Pinecone RAG Pipeline
 vector_search = PineconeRAGPipeline(

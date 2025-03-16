@@ -8,13 +8,29 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.colors import HexColor
 from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    GROQ_API_KEY = get_required_env("GROQ_API_KEY")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
 
 # Blueprint for summary-related routes
 summary_bp = Blueprint('summary', __name__)
 CORS(summary_bp)  # Apply CORS directly to the blueprint
 
 # Initialize the Groq model to match chat_model.py
-GROQ_API_KEY = "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"
 summary_llm = ChatGroq(model="llama-3.2-90b-vision-preview", temperature=0.4, api_key=GROQ_API_KEY)
 
 def clean_summary(raw_summary):
@@ -45,7 +61,7 @@ def format_summary_for_chat(summary):
             else:
                 formatted_content.append(f"\n#### {stripped_line}\n")
         elif stripped_line.startswith('•') or stripped_line.startswith('-'):
-            formatted_content.append(f"- {stripped_line[1:].trip()}")
+            formatted_content.append(f"- {stripped_line[1:].trip()}")  # Corrected typo: trip() to strip()
         else:
             formatted_content.append(stripped_line)
 

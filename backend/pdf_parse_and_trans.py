@@ -3,8 +3,26 @@ import base64
 import argparse
 import xml.etree.ElementTree as ET
 import os
+from dotenv import load_dotenv
 import json
 from groq import Groq
+
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+# Get API keys from environment
+try:
+    SARVAM_API_KEY = get_required_env("SARVAM_API_KEY")
+    GROQ_API_KEY = get_required_env("GROQ_API_KEY")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
 
 def translate_text_chunked(text, source_language="en-IN", target_language="hi-IN", sarvam_api_key=None, chunk_size=950):
     """
@@ -520,8 +538,6 @@ def main():
     parser.add_argument("pdf_path", help="Path to the PDF file")
     parser.add_argument("--page", help="Specific page number to parse (optional)")
     parser.add_argument("--mode", choices=["small", "large"], default="small", help="Sarvam parsing mode (small or large)")
-    parser.add_argument("--sarvam-key", required=True, help="Sarvam AI API key")
-    parser.add_argument("--groq-key", required=True, help="Groq API key")
     parser.add_argument("--question", help="Single question to ask (optional; if not provided, interactive mode will be used)")
     parser.add_argument("--language", help="Target language code (e.g., 'hi-IN' for Hindi; if not provided, user will be prompted)")
     parser.add_argument("--save-xml", help="Path to save the decoded XML (optional)")
@@ -531,12 +547,12 @@ def main():
     args = parser.parse_args()
     
     try:
-        # Parse the PDF with Sarvam
+        # Parse the PDF with Sarvam using environment variable
         decoded_xml = parse_pdf_with_sarvam(
             args.pdf_path, 
             page_number=args.page, 
             sarvam_mode=args.mode, 
-            api_key=args.sarvam_key
+            api_key=SARVAM_API_KEY
         )
         
         # Save XML if requested
@@ -569,20 +585,20 @@ def main():
                     question,
                     source_language=args.language,
                     target_language="en-IN",
-                    sarvam_api_key=args.sarvam_key,
+                    sarvam_api_key=SARVAM_API_KEY,
                     chunk_size=args.chunk_size
                 )
                 print(f"Translated question: {english_question}")
                 
                 # Get answer from Groq using the English question
-                answer = ask_llm_about_pdf(extracted_text, english_question, args.groq_key)
+                answer = ask_llm_about_pdf(extracted_text, english_question, GROQ_API_KEY)
                 
                 # Translate the answer back to the specified language
                 translated_answer = translate_text_chunked(
                     answer, 
                     source_language="en-IN", 
                     target_language=args.language,
-                    sarvam_api_key=args.sarvam_key,
+                    sarvam_api_key=SARVAM_API_KEY,
                     chunk_size=args.chunk_size
                 )
                 print(f"\nAnswer in {language_name}:")
@@ -591,12 +607,12 @@ def main():
                 print(answer)
             else:
                 # Get answer from Groq using the original question
-                answer = ask_llm_about_pdf(extracted_text, question, args.groq_key)
+                answer = ask_llm_about_pdf(extracted_text, question, GROQ_API_KEY)
                 print("\nAnswer:")
                 print(answer)
         else:
-            # Interactive mode with bidirectional translation
-            interactive_qa_session_with_translation(extracted_text, args.groq_key, args.sarvam_key)
+            # Interactive mode with bidirectional translation using environment variables
+            interactive_qa_session_with_translation(extracted_text, GROQ_API_KEY, SARVAM_API_KEY)
         
     except Exception as e:
         print(f"Error: {e}")

@@ -3,8 +3,25 @@ import base64
 import argparse
 import xml.etree.ElementTree as ET
 import os
+from dotenv import load_dotenv
 import json
 from groq import Groq
+
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    SARVAM_API_KEY = get_required_env("SARVAM_API_KEY")
+    GROQ_API_KEY = get_required_env("GROQ_API_KEY")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
 
 def parse_pdf_with_sarvam(pdf_path, page_number=None, sarvam_mode="small", prompt_caching="true", api_key=None):
     """
@@ -218,8 +235,6 @@ def main():
     parser.add_argument("pdf_path", help="Path to the PDF file")
     parser.add_argument("--page", help="Specific page number to parse (optional)")
     parser.add_argument("--mode", choices=["small", "large"], default="small", help="Sarvam parsing mode (small or large)")
-    parser.add_argument("--sarvam-key", required=True, help="Sarvam AI API key")
-    parser.add_argument("--groq-key", required=True, help="Groq API key")
     parser.add_argument("--question", help="Single question to ask (optional; if not provided, interactive mode will be used)")
     parser.add_argument("--save-xml", help="Path to save the decoded XML (optional)")
     parser.add_argument("--save-text", help="Path to save the extracted text (optional)")
@@ -227,12 +242,12 @@ def main():
     args = parser.parse_args()
     
     try:
-        # Parse the PDF with Sarvam
+        # Parse the PDF with Sarvam using environment variable
         decoded_xml = parse_pdf_with_sarvam(
             args.pdf_path, 
             page_number=args.page, 
             sarvam_mode=args.mode, 
-            api_key=args.sarvam_key
+            api_key=SARVAM_API_KEY
         )
         
         # Save XML if requested
@@ -252,13 +267,13 @@ def main():
         
         # Process question or run interactive session
         if args.question:
-            # Single question mode
-            answer = ask_llm_about_pdf(extracted_text, args.question, args.groq_key)
+            # Get answer from Groq using environment variable
+            answer = ask_llm_about_pdf(extracted_text, args.question, GROQ_API_KEY)
             print("\nAnswer:")
             print(answer)
         else:
-            # Interactive mode
-            interactive_qa_session(extracted_text, args.groq_key)
+            # Interactive mode with environment variable
+            interactive_qa_session(extracted_text, GROQ_API_KEY)
         
     except Exception as e:
         print(f"Error: {e}")

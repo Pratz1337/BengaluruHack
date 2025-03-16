@@ -6,9 +6,18 @@ from langchain.output_parsers import StructuredOutputParser, ResponseSchema
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = "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"
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY not found in environment variables")
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+try:
+    GROQ_API_KEY = get_required_env("GROQ_API_KEY")
+except ValueError as e:
+    print(f"Configuration error: {str(e)}")
+    raise
 
 # Define response schema for structured output
 confidence_schema = [

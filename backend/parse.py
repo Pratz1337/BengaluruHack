@@ -1,21 +1,36 @@
 import base64
 import os
+from dotenv import load_dotenv
 import requests
 import time
 import PyPDF2  # For PDF validation
 from typing import Dict, Any, Optional, List
 
+# Load environment variables
+load_dotenv()
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
 class SarvamDocumentParser:
     """Simple document parser using Sarvam AI's Parse API."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: Optional[str] = None):
         """
         Initialize the parser with API key.
         
         Args:
-            api_key: Sarvam API subscription key
+            api_key: Optional Sarvam API subscription key (will use env var if not provided)
         """
-        self.api_key = api_key
+        try:
+            self.api_key = api_key or get_required_env("SARVAM_API_KEY")
+        except ValueError as e:
+            print(f"Configuration error: {str(e)}")
+            raise
+            
         self.parse_url = "https://api.sarvam.ai/parse/parsepdf"
     
     def validate_pdf(self, file_path: str) -> bool:
@@ -278,44 +293,46 @@ def translate_pdf(self, file_content: bytes, filename: str, target_lang: str) ->
     
 # Example usage
 if __name__ == "__main__":
-    # Install requirements first
-    # pip install PyPDF2 requests
-    
-    file_path = r"C:\Users\sayal\Downloads\Prathmesh Sayal-1.pdf"
-    api_key = 'b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf'
-    
-    parser = SarvamDocumentParser(api_key)
-    
-    print("=== Single page parsing test ===")
-    result = parser.parse_pdf(file_path, page_number=1)  # Parse the first page
-    
-    if result["success"]:
-        print(f"\n✅ Successfully parsed page {result['page']} from {result['file_name']}")
-        print(f"Content length: {len(result['raw_xml'])} characters")
-        print("\nFirst 300 characters of content:")
-        print(result['raw_xml'][:300] + "...")
-    else:
-        print(f"\n❌ Parsing failed. Error: {result['error']}")
-        print("\nTroubleshooting tips:")
-        print("1. Check if the PDF is password protected")
-        print("2. Try with a simpler PDF document to test the API")
-        print("3. Verify your API key is correct")
-        print("4. Sarvam API may be experiencing issues - try again later")
-    
-    print("=== Multi-page parsing test ===")
-    result = parser.parse_pdf_multiple_pages(file_path, max_pages=3)  # Parse up to 3 pages
-    
-    if result["success"]:
-        print(f"\n✅ Successfully parsed {result['pages_parsed']} pages from {result['file_name']}")
-        print(f"Successful pages: {result['successful_pages']}")
-        print(f"Failed pages: {result['failed_pages']}")
-        print(f"Content length: {len(result['raw_xml'])} characters")
-        print("\nFirst 300 characters of content:")
-        print(result['raw_xml'][:300] + "...")
-    else:
-        print(f"\n❌ All parsing attempts failed. Error: {result['error']}")
-        print("\nTroubleshooting tips:")
-        print("1. Check if the PDF is password protected")
-        print("2. Try with a simpler PDF document to test the API")
-        print("3. Verify your API key is correct")
-        print("4. Sarvam API may be experiencing issues - try again later")
+    try:
+        file_path = r"C:\Users\sayal\Downloads\Prathmesh Sayal-1.pdf"
+        
+        # Use API key from environment variable
+        parser = SarvamDocumentParser()
+        
+        print("=== Single page parsing test ===")
+        result = parser.parse_pdf(file_path, page_number=1)  # Parse the first page
+        
+        if result["success"]:
+            print(f"\n✅ Successfully parsed page {result['page']} from {result['file_name']}")
+            print(f"Content length: {len(result['raw_xml'])} characters")
+            print("\nFirst 300 characters of content:")
+            print(result['raw_xml'][:300] + "...")
+        else:
+            print(f"\n❌ Parsing failed. Error: {result['error']}")
+            print("\nTroubleshooting tips:")
+            print("1. Check if the PDF is password protected")
+            print("2. Try with a simpler PDF document to test the API")
+            print("3. Verify your API key is correct")
+            print("4. Sarvam API may be experiencing issues - try again later")
+        
+        print("=== Multi-page parsing test ===")
+        result = parser.parse_pdf_multiple_pages(file_path, max_pages=3)  # Parse up to 3 pages
+        
+        if result["success"]:
+            print(f"\n✅ Successfully parsed {result['pages_parsed']} pages from {result['file_name']}")
+            print(f"Successful pages: {result['successful_pages']}")
+            print(f"Failed pages: {result['failed_pages']}")
+            print(f"Content length: {len(result['raw_xml'])} characters")
+            print("\nFirst 300 characters of content:")
+            print(result['raw_xml'][:300] + "...")
+        else:
+            print(f"\n❌ All parsing attempts failed. Error: {result['error']}")
+            print("\nTroubleshooting tips:")
+            print("1. Check if the PDF is password protected")
+            print("2. Try with a simpler PDF document to test the API")
+            print("3. Verify your API key is correct")
+            print("4. Sarvam API may be experiencing issues - try again later")
+        
+    except ValueError as e:
+        print(f"Configuration error: {str(e)}")
+        print("Please make sure SARVAM_API_KEY is set in your .env file")
