@@ -1,22 +1,42 @@
 "use client"
 
+import type React from "react"
 import { useState, useRef, useEffect } from "react"
-import { useAuth } from "@clerk/nextjs"
-import { useChat } from "ai/react"
-import { BeatLoader } from "react-spinners"
-import { useTranslation } from "next-i18next"
+import { type Socket, io } from "socket.io-client"
+import { AnimatePresence, motion } from "framer-motion"
 import { useTheme } from "next-themes"
-import { useRouter } from "next/router"
-import { usePlausible } from "next-plausible"
+import { toast } from "sonner"
+import ReactMarkdown from "react-markdown"
+import {
+  ArrowUpCircle,
+  FileText,
+  Download,
+  Lightbulb,
+  Mic,
+  MicOff,
+  MessageSquareText,
+  ChevronRight,
+  CircleDollarSign,
+  Calculator,
+  Upload,
+  Languages,
+  Sun,
+  Moon,
+  Menu,
+  Sparkles,
+  LayoutDashboard,
+  Clock,
+  RefreshCw,
+  LogOut,
+  Info,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { ModeToggle } from "@/components/mode-toggle"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,37 +45,60 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
-import { Slider } from "@/components/ui/slider"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
+import { Badge } from "@/components/ui/badge"
+import { TypingIndicator } from "@/components/typing-indicator"
+import { useAuth } from "@/components/auth/auth-provider"
+import {
+  fetchInterestRates,
+  fetchRecentQueries,
+  fetchFinancialTips,
+  fetchLoanCategories,
+  fetchFinancialTools,
+  type InterestRate,
+  type RecentQuery,
+} from "@/services/api-service"
+import { saveChatToHistory } from "@/services/chat-history-service"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
-import { languages } from "@/config/site"
-import { cn } from "@/lib/utils"
-import { Icons } from "@/components/icons"
-import { DataTable } from "@/components/data-table"
-import { columns } from "@/components/columns"
-import { loan_products } from "@/data/data"
-import { LoanInfoProvider, useLoanInfo } from "@/hooks/use-loan-info"
+// Environment variable with fallback
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
 
+// Message interface
 interface Message {
   id: string
   role: "user" | "assistant"
   content: string
   timestamp: Date
-  language?: string
-  original_text?: string
-  english_text?: string
-  toolCall?: any
+  isLoading?: boolean
+  toolCall?: {
+    type: string
+    events: any[]
+  }
   options?: string[]
   dropdown_items?: string[]
   link?: string
   source?: string
-  similarity?: number | null
+  similarity?: number
+  language?: string
+  original_text?: string
+  english_text?: string
+  confidence?: string | null
 }
 
+// Language options
+const languages = [
+  { code: "en", name: "English", voice_code: "en-IN" },
+  { code: "hi", name: "हिंदी", voice_code: "hi-IN" },
+  { code: "ta", name: "தமிழ்", voice_code: "ta-IN" },
+  { code: "te", name: "తెలుగు", voice_code: "te-IN" },
+  { code: "bn", name: "বাংলা", voice_code: "bn-IN" },
+  { code: "mr", name: "मराठी", voice_code: "mr-IN" },
+  { code: "kn", name: "ಕನ್ನಡ", voice_code: "kn-IN" },
+  { code: "ml", name: "മലയാളം", voice_code: "ml-IN" },
+  { code: "gu", name: "ગુજરાતી", voice_code: "gu-IN" },
+]
+
+// Loan info interface
 interface LoanInfo {
   loan_type: string
   interest_rate: string
@@ -66,152 +109,189 @@ interface LoanInfo {
 }
 
 export default function ChatbotInterface() {
-  const { locale } = useRouter()
-  const plausible = usePlausible()
-  const { t } = useTranslation()
-  const { theme } = useTheme()
-  const router = useRouter()
-
   // Auth hook
   const { user, signOut } = useAuth()
-  const { updateLoanInfo } = useLoanInfo()
 
-  // Chatbot hooks
-  const [isConfigured, setIsConfigured] = useState(false)
-  const [apiKey, setApiKey] = useState("")
-  const [apiUrl, setApiUrl] = useState("")
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [isAudioEnabled, setIsAudioEnabled] = useState(false)
-  const [temperature, setTemperature] = useState(0.0)
-  const [topP, setTopP] = useState(1.0)
-  const [frequencyPenalty, setFrequencyPenalty] = useState(0.0)
-  const [presencePenalty, setPresencePenalty] = useState(0.0)
-  const [model, setModel] = useState("mistralai/Mistral-7B-Instruct-v0.2")
-  const [stream, setStream] = useState(true)
-  const [translate, setTranslate] = useState(false)
-  const [language, setLanguage] = useState(locale || "en")
+  // State hooks
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "1",
+      role: "assistant",
+      content: `Hello${user?.displayName ? ` ${user.displayName}` : ""}! I'm FinMate, your multilingual loan advisor. How can I help you today with loans, financial advice, or eligibility checks?`,
+      timestamp: new Date(),
+      options: ["Check loan eligibility", "Personal loan information", "Financial tips"],
+      confidence: "High",
+    },
+  ])
+  const [input, setInput] = useState("")
+  const [isConnected, setIsConnected] = useState(false)
   const [isBotTyping, setIsBotTyping] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
-
-  // Ref for the audio player
-  const audioRef = useRef<HTMLAudioElement>(null)
-
-  // Initialize the chat hook
-  const { append, isLoading, setInput, input } = useChat({
-    api: "/api/chat",
-    body: {
-      apiKey: apiKey,
-      apiUrl: apiUrl,
-      stream: stream,
-      translate: translate,
-      language: language,
-      model: model,
-      temperature: temperature,
-      top_p: topP,
-      frequency_penalty: frequencyPenalty,
-      presence_penalty: presencePenalty,
-    },
-    onResponse: () => {
-      setIsBotTyping(false)
-    },
-    onFinish: (message) => {
-      setIsBotTyping(false)
-      console.log("Chat finished", message)
-    },
+  const [language, setLanguage] = useState("en")
+  const [isVoiceMode, setIsVoiceMode] = useState(false)
+  const [documentFile, setDocumentFile] = useState<File | null>(null)
+  const [documentInfo, setDocumentInfo] = useState<any>(null)
+  const [sessionId, setSessionId] = useState("")
+  const [loanInfo, setLoanInfo] = useState<LoanInfo>({
+    loan_type: "",
+    interest_rate: "",
+    eligibility: "",
+    repayment_options: "",
+    additional_info: "",
   })
+  const [interestRates, setInterestRates] = useState<InterestRate[]>([])
+  const [recentQueries, setRecentQueries] = useState<RecentQuery[]>([])
+  const [financialTips, setFinancialTips] = useState<string[]>([])
+  const [loanCategories, setLoanCategories] = useState<any[]>([])
+  const [financialTools, setFinancialTools] = useState<any[]>([])
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
+  const [isFetchingData, setIsFetchingData] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [autoDetectLanguage, setAutoDetectLanguage] = useState(true)
+  const [debugLogs, setDebugLogs] = useState<string[]>([])
+  const [isInConversation, setIsInConversation] = useState(false)
+  const [isVoiceServerAvailable, setIsVoiceServerAvailable] = useState(false)
+  const [dataRefreshInterval, setDataRefreshInterval] = useState<NodeJS.Timeout | null>(null)
 
-  // Load settings from local storage on component mount
+  // Refs
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const socketRef = useRef<Socket | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const silenceDetectorRef = useRef<any>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const silenceStartRef = useRef<number | null>(null)
+  const lastAudioLevelRef = useRef<number>(0)
+  const isSpeakingRef = useRef<boolean>(false)
+
+  // Use theme hook
+  const { theme, setTheme } = useTheme()
+  const isDarkMode = theme === "dark"
+
+  // Debug logger
+  const addLog = (message: string) => {
+    setDebugLogs((prev) => [...prev, `${new Date().toISOString().slice(11, 19)}: ${message}`])
+    console.log(message)
+  }
+
+  // Connect to websocket on component mount
   useEffect(() => {
-    const storedApiKey = localStorage.getItem("apiKey")
-    const storedApiUrl = localStorage.getItem("apiUrl")
-    const storedIsAudioEnabled = localStorage.getItem("isAudioEnabled") === "true"
-    const storedTemperature = localStorage.getItem("temperature")
-    const storedTopP = localStorage.getItem("topP")
-    const storedFrequencyPenalty = localStorage.getItem("frequencyPenalty")
-    const storedPresencePenalty = localStorage.getItem("presencePenalty")
-    const storedModel = localStorage.getItem("model")
-    const storedStream = localStorage.getItem("stream") === "true"
-    const storedTranslate = localStorage.getItem("translate") === "true"
-    const storedLanguage = localStorage.getItem("language")
+    // Generate a session ID
+    const newSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+    setSessionId(newSessionId)
 
-    if (storedApiKey) setApiKey(storedApiKey)
-    if (storedApiUrl) setApiUrl(storedApiUrl)
-    setIsAudioEnabled(storedIsAudioEnabled)
-    if (storedTemperature) setTemperature(Number.parseFloat(storedTemperature))
-    if (storedTopP) setTopP(Number.parseFloat(storedTopP))
-    if (storedFrequencyPenalty) setFrequencyPenalty(Number.parseFloat(storedFrequencyPenalty))
-    if (storedPresencePenalty) setPresencePenalty(Number.parseFloat(storedPresencePenalty))
-    if (storedModel) setModel(storedModel)
-    setStream(storedStream)
-    setTranslate(storedTranslate)
-    if (storedLanguage) setLanguage(storedLanguage)
+    // Connect to WebSocket
+    console.log(`Connecting to server at: ${API_URL}`)
 
-    // Check if API Key and URL are set
-    if (storedApiKey && storedApiUrl) {
-      setIsConfigured(true)
+    try {
+      const socket = io(API_URL, {
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionAttempts: 5,
+      })
+
+      socket.on("connect", () => {
+        console.log("Connected to server")
+        setIsConnected(true)
+        socketRef.current = socket
+        toast.success("Connected to FinMate advisor")
+
+        // Check if voice API is supported
+        socket.emit("check_voice_support")
+      })
+
+      // Add this line to listen for audio responses
+      socket.on("audio_response", handleSocketResponse)
+
+      // You already have this line for text responses
+      socket.on("response", handleSocketResponse)
+
+      socket.on("voice_support", (supported) => {
+        setIsVoiceServerAvailable(!!supported)
+        console.log(`Voice support: ${supported ? "Available" : "Unavailable"}`)
+      })
+
+      socket.on("disconnect", () => {
+        console.log("Disconnected from server")
+        setIsConnected(false)
+        toast.error("Disconnected from server. Trying to reconnect...")
+      })
+
+      socket.on("connect_error", (error) => {
+        console.error("Connection error:", error)
+        setIsConnected(false)
+        toast.error("Connection error. Trying to reconnect...")
+      })
+
+      socketRef.current = socket
+    } catch (error) {
+      console.error("Error connecting to WebSocket:", error)
+      toast.error("Failed to connect to server")
+    }
+
+    // Fetch sidebar data
+    fetchSidebarData()
+
+    // Set up interval to refresh data every 5 minutes
+    const interval = setInterval(
+      () => {
+        fetchSidebarData()
+      },
+      5 * 60 * 1000,
+    )
+
+    setDataRefreshInterval(interval)
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect()
+      }
+
+      // Clear the refresh interval
+      if (dataRefreshInterval) {
+        clearInterval(dataRefreshInterval)
+      }
     }
   }, [])
 
-  // Save settings to local storage whenever they change
+  // Scroll to bottom when messages change
   useEffect(() => {
-    localStorage.setItem("apiKey", apiKey)
-    localStorage.setItem("apiUrl", apiUrl)
-    localStorage.setItem("isAudioEnabled", isAudioEnabled.toString())
-    localStorage.setItem("temperature", temperature.toString())
-    localStorage.setItem("topP", topP.toString())
-    localStorage.setItem("frequencyPenalty", frequencyPenalty.toString())
-    localStorage.setItem("presencePenalty", presencePenalty.toString())
-    localStorage.setItem("model", model)
-    localStorage.setItem("stream", stream.toString())
-    localStorage.setItem("translate", translate.toString())
-    localStorage.setItem("language", language)
-  }, [
-    apiKey,
-    apiUrl,
-    isAudioEnabled,
-    temperature,
-    topP,
-    frequencyPenalty,
-    presencePenalty,
-    model,
-    stream,
-    translate,
-    language,
-  ])
+    scrollToBottom()
+  }, [messages])
 
-  // Function to handle sending messages
-  const handleSend = async () => {
-    if (!input.trim()) return
+  // Handle audio playback
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.onplay = () => {
+        setIsPlaying(true)
+        // Stop recording while the AI is speaking
+        if (isRecording) {
+          stopVoiceChat()
+        }
+      }
 
-    // Add the user's message to the chat
-    const userMessage: Message = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content: input,
-      timestamp: new Date(),
+      audioRef.current.onended = () => {
+        setIsPlaying(false)
+
+        // Auto-restart voice chat if we're in conversation mode
+        if (isInConversation && isVoiceMode) {
+          addLog("AI finished speaking, auto-reactivating microphone")
+          setTimeout(() => {
+            startVoiceChat()
+          }, 500)
+        }
+      }
     }
-    setMessages((prev) => [...prev, userMessage])
 
-    // Set the bot to typing
-    setIsBotTyping(true)
+    return () => {
+      stopVoiceChat()
+    }
+  }, [isInConversation, isVoiceMode])
 
-    // Send the message to the chat API
-    plausible("Chatbot Message Sent", {
-      props: {
-        language: language,
-        translate: translate,
-        model: model,
-      },
-    })
-    await append({
-      content: input,
-      role: "user",
-    })
-  }
-
-  // Function to handle socket responses
+  // Handle Socket.io response
   const handleSocketResponse = (data: any) => {
     console.log("Received response:", data)
     setIsBotTyping(false)
@@ -234,6 +314,7 @@ export default function ChatbotInterface() {
           link: data.info?.link || "",
           source: data.res?.source || "",
           similarity: data.res?.similarity || null,
+          confidence: data.res?.similarity ? `${(data.res.similarity * 100).toFixed(1)}%` : data.confidence || "N/A",
         },
       ])
     }
@@ -249,526 +330,1362 @@ export default function ChatbotInterface() {
     // Update loan information if available
     if (data.info) {
       const newLoanInfo = {
-        loan_type: data.info.loan_type || "",
-        interest_rate: data.info.interest_rate || "",
-        eligibility: data.info.eligibility || "",
-        repayment_options: data.info.repayment_options || "",
-        additional_info: data.info.additional_info || "",
-        result: data.info.result || "",
+        loan_type: data.info.loan_type || loanInfo.loan_type,
+        interest_rate: data.info.interest_rate || loanInfo.interest_rate,
+        eligibility: data.info.eligibility || loanInfo.eligibility,
+        repayment_options: data.info.repayment_options || loanInfo.repayment_options,
+        additional_info: data.info.additional_info || loanInfo.additional_info,
+        result: data.info.result || loanInfo.result,
       }
-      updateLoanInfo(newLoanInfo)
+      setLoanInfo(newLoanInfo)
+    }
+
+    if (data.info?.loan_type) {
+      // Refresh history when loan type is determined
+      fetchSidebarData()
     }
   }
 
-  // Function to handle tool calls
-  const handleToolCall = async (action: string, id: string) => {
-    if (action === "confirm") {
-      // Find the message with the tool call
-      const message = messages.find((message) => message.id === id)
-      if (!message) return
+  // Fetch sidebar data
+  const fetchSidebarData = async () => {
+    setIsFetchingData(true)
+    try {
+      // Fetch interest rates from the real API
+      const ratesData = await fetchInterestRates()
+      setInterestRates(ratesData)
 
-      // Get the selected option
-      const selectedOption = message.options?.[0]
-      if (!selectedOption) return
+      // Fetch recent queries from the real API
+      const queriesData = await fetchRecentQueries()
+      setRecentQueries(queriesData)
 
-      // Add the user's message to the chat
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        role: "user",
-        content: selectedOption,
-        timestamp: new Date(),
-      }
-      setMessages((prev) => [...prev, userMessage])
+      // Fetch financial tips from the real API
+      const tipsData = await fetchFinancialTips()
+      setFinancialTips(tipsData)
 
-      // Set the bot to typing
-      setIsBotTyping(true)
+      // Fetch loan categories from the real API
+      const categoriesData = await fetchLoanCategories()
+      setLoanCategories(categoriesData)
 
-      // Send the message to the chat API
-      plausible("Chatbot Message Sent", {
-        props: {
-          language: language,
-          translate: translate,
-          model: model,
-        },
-      })
-      await append({
-        content: selectedOption,
-        role: "user",
-      })
+      // Fetch financial tools from the real API
+      const toolsData = await fetchFinancialTools()
+      setFinancialTools(toolsData)
+
+      console.log("Successfully fetched all sidebar data")
+    } catch (error) {
+      console.error("Error fetching sidebar data:", error)
+      toast.error("Failed to fetch some financial data")
+    } finally {
+      setIsFetchingData(false)
     }
   }
 
-  // Function to handle dropdown selections
-  const handleDropdownSelect = async (value: string, id: string) => {
-    // Find the message with the tool call
-    const message = messages.find((message) => message.id === id)
-    if (!message) return
+  // Manual refresh of sidebar data
+  const handleRefreshData = async () => {
+    toast.info("Refreshing financial data...")
+    await fetchSidebarData()
+    toast.success("Financial data refreshed")
+  }
 
-    // Add the user's message to the chat
+  // Scroll to bottom of messages container
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  // Send message to server
+  const sendMessage = async (message: string) => {
+    if (!message.trim()) return
+
+    if (!socketRef.current || !isConnected) {
+      toast.error("Not connected to server. Please wait...")
+      return
+    }
+
+    // Add user message to state
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: value,
+      content: message,
       timestamp: new Date(),
+      language: language,
     }
-    setMessages((prev) => [...prev, userMessage])
 
-    // Set the bot to typing
+    setMessages((prev) => [...prev, userMessage])
+    setInput("")
     setIsBotTyping(true)
 
-    // Send the message to the chat API
-    plausible("Chatbot Message Sent", {
-      props: {
-        language: language,
-        translate: translate,
-        model: model,
-      },
+    // Send message to server
+    socketRef.current.emit("send_message", {
+      msg: message,
+      id: sessionId,
+      language: autoDetectLanguage ? "auto" : language,
+      auto_detect: autoDetectLanguage,
+      user_id: user?.uid || "anonymous",
+      user_name: user?.displayName || "anonymous",
     })
-    await append({
-      content: value,
-      role: "user",
-    })
+
+    // Save message to chat history
+    await saveChatToHistory(
+      socketRef.current,
+      message,
+      loanInfo.loan_type || "General",
+      new Date().toISOString(),
+      user?.uid || "anonymous",
+    )
+
+    // Refresh the history immediately
+    fetchSidebarData()
   }
 
-  // Function to handle link clicks
-  const handleLinkClick = (link: string) => {
-    plausible("Chatbot Link Clicked", {
-      props: {
-        link: link,
-      },
-    })
+  // Handle file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setDocumentFile(file)
+
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("chat_id", sessionId)
+
+    try {
+      setIsFetchingData(true)
+      const response = await fetch(`${API_URL}/upload-document`, {
+        method: "POST",
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setDocumentInfo(data)
+        toast.success(`Document processed: ${file.name}`)
+
+        // Add a message about the document
+        const content = `I've analyzed your document: ${file.name}. ${data.document_summary || ""}`
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `doc-${Date.now()}`,
+            role: "assistant",
+            content,
+            timestamp: new Date(),
+          },
+        ])
+      } else {
+        toast.error(`Failed to process document: ${data.error}`)
+      }
+    } catch (error) {
+      console.error("Error uploading document:", error)
+      toast.error("Error uploading document")
+    } finally {
+      setIsFetchingData(false)
+    }
   }
 
-  // Function to handle source clicks
-  const handleSourceClick = (source: string) => {
-    plausible("Chatbot Source Clicked", {
-      props: {
-        source: source,
+  // Download conversation summary
+  const downloadSummary = async () => {
+    if (messages.length < 2) {
+      toast.error("Not enough conversation to generate a summary")
+      return
+    }
+
+    try {
+      setIsFetchingData(true)
+
+      // Format messages for summary generation
+      const formattedMessages = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((message) => ({
+          user: message.role === "user" ? message.content : "",
+          bot: message.role === "assistant" ? message.content : "",
+        }))
+        .filter((msg) => msg.user || msg.bot)
+
+      // Add timestamp to prevent CORS caching issues
+      const timestamp = Date.now()
+
+      // Generate summary
+      const response = await fetch(`${API_URL}/generate-summary?t=${timestamp}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ conversation: formattedMessages }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      // Download summary as PDF
+      const downloadResponse = await fetch(`${API_URL}/download-summary?t=${timestamp}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/pdf",
+        },
+        body: JSON.stringify({ summary: data.summary }),
+      })
+
+      if (!downloadResponse.ok) {
+        throw new Error(`HTTP error! status: ${downloadResponse.status}`)
+      }
+
+      // Rest of the function remains the same
+      const blob = await downloadResponse.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `FinMate_Summary_${new Date().toISOString().split("T")[0]}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      a.remove()
+
+      toast.success("Summary downloaded successfully")
+    } catch (error) {
+      console.error("Error downloading summary:", error)
+      toast.error(`Error downloading summary: ${error}`)
+    } finally {
+      setIsFetchingData(false)
+    }
+  }
+
+  // Toggle voice mode
+  const handleToggleVoiceMode = () => {
+    if (isVoiceMode) {
+      stopVoiceChat()
+      setIsInConversation(false)
+    } else {
+      // Try to start voice chat, but handle failure gracefully
+      try {
+        startVoiceChat()
+        setIsInConversation(true)
+        toast.success("Voice mode activated")
+      } catch (err) {
+        console.error("Failed to start voice mode:", err)
+        toast.error("Voice mode unavailable - please try again later")
+        setIsVoiceMode(false)
+        return
+      }
+    }
+    setIsVoiceMode(!isVoiceMode)
+  }
+
+  // Start voice chat
+  const startVoiceChat = async () => {
+    try {
+      // Check if browser supports getUserMedia
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Your browser doesn't support voice recording")
+      }
+
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+
+      // Set up audio context for analyzing audio levels
+      const audioContext = new AudioContext()
+      audioContextRef.current = audioContext
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      const bufferLength = analyser.frequencyBinCount
+      const dataArray = new Uint8Array(bufferLength)
+
+      // Connect stream to analyser
+      const source = audioContext.createMediaStreamSource(stream)
+      source.connect(analyser)
+
+      // Start the media recorder
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+
+      // Reset audio chunks
+      audioChunksRef.current = []
+
+      // Set up media recorder event handlers
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      // Start recorder
+      mediaRecorder.start(100) // Collect data in 100ms chunks
+      setIsRecording(true)
+      addLog("Started voice recording")
+
+      // Start silence detection
+      startSilenceDetection(analyser, dataArray)
+    } catch (error) {
+      addLog(`Error starting voice chat: ${error}`)
+      toast.error(`Could not access microphone: ${error}`)
+      throw error // Rethrow to allow caller to handle it
+    }
+  }
+
+  // Start silence detection
+  const startSilenceDetection = (analyser: AnalyserNode, dataArray: Uint8Array) => {
+    // Clear any existing detector
+    if (silenceDetectorRef.current) {
+      clearInterval(silenceDetectorRef.current)
+    }
+
+    // Initialize silence timer
+    silenceStartRef.current = null
+
+    // Start detecting silence
+    silenceDetectorRef.current = setInterval(() => {
+      // Get current audio data
+      analyser.getByteFrequencyData(dataArray)
+
+      // Calculate average volume
+      let sum = 0
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i]
+      }
+      const averageVolume = sum / dataArray.length
+      lastAudioLevelRef.current = averageVolume
+
+      // Detect if user is speaking (adjust threshold as needed)
+      const isSpeaking = averageVolume > 15 // Adjust threshold based on testing
+
+      // Display speaking state on UI for debugging
+      if (isSpeaking !== isSpeakingRef.current) {
+        isSpeakingRef.current = isSpeaking
+        setIsSpeaking(isSpeaking)
+        addLog(`User ${isSpeaking ? "started" : "stopped"} speaking. Audio level: ${averageVolume.toFixed(2)}`)
+      }
+
+      // If not speaking, check for extended silence
+      if (!isSpeaking) {
+        if (silenceStartRef.current === null) {
+          silenceStartRef.current = Date.now()
+        } else {
+          const silenceDuration = Date.now() - silenceStartRef.current
+
+          // If silent for 3 seconds, process the audio
+          if (silenceDuration >= 3000 && audioChunksRef.current.length > 0) {
+            addLog(`3 seconds of silence detected - processing audio`)
+            processRecordedAudio()
+          }
+        }
+      } else {
+        // Reset silence timer if user is speaking
+        silenceStartRef.current = null
+      }
+    }, 200) // Check every 200ms
+  }
+
+  // Process recorded audio
+  const processRecordedAudio = async () => {
+    if (!mediaRecorderRef.current || audioChunksRef.current.length === 0) return
+
+    // Stop the recorder
+    const mediaRecorder = mediaRecorderRef.current
+    if (mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop()
+    }
+
+    // Stop silence detection
+    if (silenceDetectorRef.current) {
+      clearInterval(silenceDetectorRef.current)
+    }
+
+    // Create blob from audio chunks
+    const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" })
+
+    // Add a processing message
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: "Processing your voice message...",
+        timestamp: new Date(),
       },
-    })
+    ])
+
+    // Convert to base64
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      if (event.target && event.target.result) {
+        // Get base64 audio
+        const base64Audio = (event.target.result as string).split(",")[1]
+
+        // Send to server
+        if (socketRef.current && socketRef.current.connected) {
+          addLog(`Sending audio to server - length: ${base64Audio.length}`)
+
+          // Update the processing message
+          setMessages((prev) => {
+            const newMessages = [...prev]
+            if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === "user") {
+              newMessages[newMessages.length - 1].content = "Sending your voice message..."
+            }
+            return newMessages
+          })
+
+          socketRef.current.emit("audio_message", {
+            audio: base64Audio,
+            language: autoDetectLanguage ? "auto" : language,
+            auto_detect: autoDetectLanguage,
+            id: sessionId,
+            user_id: user?.uid || "anonymous",
+            user_name: user?.displayName || "anonymous",
+          })
+
+          // Reset for next recording
+          audioChunksRef.current = []
+          setIsRecording(false)
+        }
+      }
+    }
+    reader.readAsDataURL(audioBlob)
+  }
+
+  // Stop voice chat
+  const stopVoiceChat = () => {
+    // Stop media recorder
+    if (mediaRecorderRef.current) {
+      if (mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop()
+      }
+
+      // Stop all tracks in the stream
+      if (mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
+      }
+    }
+
+    // Stop silence detection
+    if (silenceDetectorRef.current) {
+      clearInterval(silenceDetectorRef.current)
+    }
+
+    // Close audio context
+    if (audioContextRef.current) {
+      audioContextRef.current.close()
+    }
+
+    setIsRecording(false)
+    addLog("Voice chat stopped")
+  }
+
+  // Handle option click
+  const handleOptionClick = (option: string) => {
+    sendMessage(option)
+  }
+
+  // Format time
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  }
+
+  // Handle keyboard submission
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage(input)
+    }
+  }
+
+  // Handle sign out
+  const handleSignOut = async () => {
+    try {
+      await signOut()
+      toast.success("Signed out successfully")
+      // Auth guard will redirect to landing page
+    } catch (error) {
+      toast.error("Error signing out")
+    }
+  }
+
+  const getTimeAgo = (date: Date) => {
+    const now = new Date()
+    const diff = now.getTime() - date.getTime()
+    const seconds = Math.floor(diff / 1000)
+    const minutes = Math.floor(seconds / 60)
+    const hours = Math.floor(minutes / 60)
+    const days = Math.floor(hours / 24)
+
+    if (days > 0) {
+      return `${days} day${days > 1 ? "s" : ""} ago`
+    } else if (hours > 0) {
+      return `${hours} hour${hours > 1 ? "s" : ""} ago`
+    } else if (minutes > 0) {
+      return `${minutes} minute${minutes > 1 ? "s" : ""} ago`
+    } else {
+      return "Just now"
+    }
   }
 
   return (
-    <LoanInfoProvider>
-      <div className="container relative min-h-screen flex-col items-center">
-        <header className="flex w-full shrink-0 items-center justify-between py-2">
-          <div className="flex items-center space-x-2">
-            <Icons.logo className="h-6 w-6" />
-            <Link href="/" className="hidden font-bold sm:inline-block">
-              {t("site.name")}
-            </Link>
-            {!isConfigured && (
-              <Badge variant="destructive" className="ml-2">
-                {t("chatbot.configuration_required")}
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center space-x-4">
-            <ModeToggle />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <Icons.globe className="mr-2 h-4 w-4" />
-                  {languages[locale]?.name}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>{t("select_language")}</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {Object.keys(languages).map((key) => (
-                  <DropdownMenuItem key={key} onClick={() => router.push("/", `/${key}`)}>
-                    {languages[key]?.name}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="relative">
-                  {user ? (
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={user.imageUrl} alt={user.firstName || "Avatar"} />
-                      <AvatarFallback>{user.firstName?.charAt(0) || user.username?.charAt(0) || "U"}</AvatarFallback>
-                    </Avatar>
-                  ) : (
-                    <Icons.user className="mr-2 h-4 w-4" />
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>{user?.firstName || user?.username || t("guest")}</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {user ? (
-                  <DropdownMenuItem onClick={() => signOut()}>
-                    {t("sign_out")}
-                    <Icons.logout className="ml-auto h-4 w-4" />
-                  </DropdownMenuItem>
-                ) : (
-                  <DropdownMenuItem onClick={() => router.push("/sign-in")}>
-                    {t("sign_in")}
-                    <Icons.login className="ml-auto h-4 w-4" />
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </header>
-        <main className="flex w-full flex-col items-center space-y-4 p-4">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle>{t("chatbot.title")}</CardTitle>
-              <CardDescription>{t("chatbot.description")}</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <ScrollArea className="h-[400px] w-full rounded-md border p-4">
-                {messages.length === 0 ? (
-                  <div className="flex h-full items-center justify-center text-muted-foreground">
-                    {t("chatbot.no_messages")}
+    <TooltipProvider>
+      <div className="flex flex-col h-screen">
+        {/* Header */}
+        <header className="bg-gradient-to-r from-indigo-600 to-purple-600 shadow-md p-3 md:p-4">
+          <div className="container max-w-7xl mx-auto flex justify-between items-center">
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-white bg-opacity-20">
+                <CircleDollarSign className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-lg md:text-xl font-bold text-white">FinMate</h1>
+                <div className="flex items-center">
+                  <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-400" : "bg-red-400"} mr-2`}></div>
+                  <p className="text-xs text-white">{isConnected ? "Connected" : "Disconnecting..."}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              {/* User info */}
+              {user && (
+                <div className="hidden md:flex items-center mr-2">
+                  <div className="bg-white bg-opacity-20 rounded-full p-1 mr-2">
+                    {user.photoURL ? (
+                      <img
+                        src={user.photoURL || "/placeholder.svg"}
+                        alt={user.displayName || "User"}
+                        className="w-7 h-7 rounded-full"
+                      />
+                    ) : (
+                      <div className="w-7 h-7 rounded-full bg-indigo-800 flex items-center justify-center text-white text-sm">
+                        {user.displayName ? user.displayName[0].toUpperCase() : "U"}
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  messages.map((message) => (
-                    <div key={message.id} className="mb-4">
-                      <div className="flex items-start space-x-2">
-                        {message.role === "user" ? (
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src={user?.imageUrl || "/icons/user.svg"} alt={user?.firstName || "Avatar"} />
-                            <AvatarFallback>
-                              {user?.firstName?.charAt(0) || user?.username?.charAt(0) || "U"}
-                            </AvatarFallback>
-                          </Avatar>
-                        ) : (
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src="/icons/logo.svg" alt="Bot Avatar" />
-                            <AvatarFallback>B</AvatarFallback>
-                          </Avatar>
-                        )}
+                  <span className="text-white text-sm hidden lg:inline-block">
+                    {user.displayName || user.email || "User"}
+                  </span>
+                </div>
+              )}
+
+              {/* Language selector */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="text-white hover:bg-white hover:bg-opacity-10">
+                    <Languages className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Select Language</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setAutoDetectLanguage(true)}
+                    className={autoDetectLanguage ? "bg-muted" : ""}
+                  >
+                    Auto-detect language
+                    {autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {languages.map((lang) => (
+                    <DropdownMenuItem
+                      key={lang.code}
+                      onClick={() => {
+                        setLanguage(lang.code)
+                        setAutoDetectLanguage(false)
+                      }}
+                      className={language === lang.code && !autoDetectLanguage ? "bg-muted" : ""}
+                    >
+                      {lang.name}
+                      {language === lang.code && !autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* Theme toggle */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                className="text-white hover:bg-white hover:bg-opacity-10"
+              >
+                {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              </Button>
+
+              {/* Voice mode toggle */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleToggleVoiceMode}
+                disabled={!isVoiceServerAvailable}
+                title={isVoiceServerAvailable ? "Toggle voice mode" : "Voice mode unavailable"}
+                className="text-white hover:bg-white hover:bg-opacity-10"
+              >
+                {isVoiceMode ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+              </Button>
+
+              {/* Sign out button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleSignOut}
+                className="text-white hover:bg-white hover:bg-opacity-10"
+                title="Sign out"
+              >
+                <LogOut className="h-5 w-5" />
+              </Button>
+
+              {/* Mobile drawer trigger */}
+              <Sheet>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-white hover:bg-white hover:bg-opacity-10 md:hidden"
+                  >
+                    <Menu className="h-5 w-5" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="right" className="w-[80vw]">
+                  <div className="flex flex-col">
+                    {/* User info in mobile menu */}
+                    {user && (
+                      <div className="flex items-center mb-4 pb-4 border-b">
+                        <div className="bg-muted rounded-full p-1 mr-3">
+                          {user.photoURL ? (
+                            <img
+                              src={user.photoURL || "/placeholder.svg"}
+                              alt={user.displayName || "User"}
+                              className="w-10 h-10 rounded-full"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white">
+                              {user.displayName ? user.displayName[0].toUpperCase() : "U"}
+                            </div>
+                          )}
+                        </div>
                         <div>
-                          <div className="text-sm font-bold">{message.role === "user" ? t("you") : t("bot")}</div>
-                          <div className="prose max-w-none break-words">
-                            {message.content}
-                            {message.toolCall && message.options && message.options.length > 0 && (
-                              <div className="mt-2">
-                                {message.options.map((option, index) => (
-                                  <Button
-                                    key={index}
-                                    variant="outline"
-                                    className="mr-2"
-                                    onClick={() => handleToolCall("confirm", message.id)}
-                                  >
-                                    {option}
-                                  </Button>
-                                ))}
-                              </div>
+                          <p className="font-medium">{user.displayName || "User"}</p>
+                          <p className="text-sm text-muted-foreground">{user.email}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <h2 className="text-lg font-semibold py-4">Financial Information</h2>
+
+                    <Tabs defaultValue="info" className="flex-1">
+                      <TabsList className="grid grid-cols-3">
+                        <TabsTrigger value="info">Loan Info</TabsTrigger>
+                        <TabsTrigger value="rates">Rates</TabsTrigger>
+                        <TabsTrigger value="tips">Tips</TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="info" className="space-y-4 overflow-auto">
+                        {loanInfo.loan_type ? (
+                          <div className="space-y-4">
+                            <Card>
+                              <CardHeader className="py-2">
+                                <CardTitle>Loan Type</CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <p>{loanInfo.loan_type}</p>
+                              </CardContent>
+                            </Card>
+
+                            {loanInfo.interest_rate && (
+                              <Card>
+                                <CardHeader className="py-2">
+                                  <CardTitle>Interest Rate</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <p>{loanInfo.interest_rate}</p>
+                                </CardContent>
+                              </Card>
                             )}
-                            {message.toolCall && message.dropdown_items && message.dropdown_items.length > 0 && (
-                              <div className="mt-2">
-                                <Select onValueChange={(value) => handleDropdownSelect(value, message.id)}>
-                                  <SelectTrigger className="w-[180px]">
-                                    <SelectValue placeholder="Select an option" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {message.dropdown_items.map((item, index) => (
-                                      <SelectItem key={index} value={item}>
-                                        {item}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
+
+                            {loanInfo.eligibility && (
+                              <Card>
+                                <CardHeader className="py-2">
+                                  <CardTitle>Eligibility</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
+                                </CardContent>
+                              </Card>
                             )}
-                            {message.link && (
-                              <div className="mt-2">
-                                <Link
-                                  href={message.link}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-500 hover:underline"
-                                  onClick={() => handleLinkClick(message.link || "")}
-                                >
-                                  {t("chatbot.learn_more")}
-                                </Link>
-                              </div>
-                            )}
-                            {message.source && (
-                              <div className="mt-2">
-                                <Link
-                                  href={message.source}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-500 hover:underline"
-                                  onClick={() => handleSourceClick(message.source || "")}
-                                >
-                                  {t("chatbot.source")}
-                                </Link>
-                              </div>
-                            )}
-                            {message.similarity !== null && (
-                              <div className="mt-2">
-                                <Badge variant="secondary">
-                                  {t("chatbot.similarity")}: {message.similarity.toFixed(2)}
-                                </Badge>
-                              </div>
+
+                            {loanInfo.repayment_options && (
+                              <Card>
+                                <CardHeader className="py-2">
+                                  <CardTitle>Repayment Options</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
+                                </CardContent>
+                              </Card>
                             )}
                           </div>
-                          {message.language && message.language !== "en" && message.english_text && (
-                            <div className="mt-2 text-sm text-muted-foreground italic">{message.english_text}</div>
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <MessageSquareText className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                            <p>No loan information available yet</p>
+                            <p className="text-sm">Ask about specific loans to see details here</p>
+                          </div>
+                        )}
+                      </TabsContent>
+
+                      <TabsContent value="rates" className="overflow-auto">
+                        <div className="space-y-4">
+                          {interestRates.length > 0 ? (
+                            interestRates.map((rate, index) => (
+                              <Card key={index}>
+                                <CardHeader className="py-2">
+                                  <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
+                                </CardHeader>
+                                <CardContent className="pb-4">
+                                  <div className="flex justify-between items-center mb-2">
+                                    <span>Min</span>
+                                    <span>Max</span>
+                                  </div>
+                                  <div className="relative h-7 w-full bg-muted rounded-lg">
+                                    <div
+                                      className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
+                                      style={{ width: "100%" }}
+                                    ></div>
+                                    <div className="absolute inset-0 flex justify-between items-center px-2">
+                                      <Badge variant="secondary">{rate.min_rate}%</Badge>
+                                      <Badge variant="secondary">{rate.max_rate}%</Badge>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))
+                          ) : (
+                            <div className="text-center py-8 text-muted-foreground">
+                              {isFetchingData ? (
+                                <div className="flex flex-col items-center">
+                                  <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                                  <p>Fetching interest rates...</p>
+                                </div>
+                              ) : (
+                                <>
+                                  <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                                  <p>Interest rate data unavailable</p>
+                                  <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                    <RefreshCw className="mr-2 h-4 w-4" />
+                                    Refresh Data
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="tips" className="overflow-auto">
+                        <div className="space-y-4">
+                          {financialTips.length > 0 ? (
+                            financialTips.map((tip, index) => (
+                              <Card key={index}>
+                                <CardContent className="pt-6">
+                                  <div className="flex">
+                                    <div className="mr-4 mt-0.5">
+                                      <Lightbulb className="h-5 w-5 text-yellow-500" />
+                                    </div>
+                                    <p>{tip}</p>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))
+                          ) : (
+                            <div className="text-center py-8 text-muted-foreground">
+                              {isFetchingData ? (
+                                <div className="flex flex-col items-center">
+                                  <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                                  <p>Loading financial tips...</p>
+                                </div>
+                              ) : (
+                                <>
+                                  <Lightbulb className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                                  <p>No financial tips available</p>
+                                  <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                    <RefreshCw className="mr-2 h-4 w-4" />
+                                    Refresh Data
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+
+                    <div className="mt-6 space-y-3">
+                      <Button onClick={downloadSummary} className="w-full" variant="outline">
+                        <Download className="mr-2 h-4 w-4" /> Download Summary
+                      </Button>
+                      `
+                      <Button onClick={handleSignOut} className="w-full" variant="outline">
+                        <LogOut className="mr-2 h-4 w-4" /> Sign Out
+                      </Button>
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileUpload}
+                        accept=".pdf,.doc,.docx,.csv"
+                        className="hidden"
+                      />
+                    </div>
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </div>
+          </div>
+        </header>
+
+        {/* Main content area */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Chat messages area */}
+          <div className="flex-1 flex flex-col h-full">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
+              <AnimatePresence initial={false}>
+                {messages.map((message) => (
+                  <motion.div
+                    key={message.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`relative max-w-[85%] md:max-w-[70%] rounded-lg p-3 ${
+                        message.role === "user" ? "bg-indigo-600 text-white" : "bg-muted/70"
+                      }`}
+                    >
+                      <div className="flex flex-col">
+                        <div className="px-1">
+                          <ReactMarkdown className="prose dark:prose-invert prose-sm max-w-none break-words">
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+
+                        {message.options && message.options.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            {message.options.map((option) => (
+                              <Button
+                                key={option}
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleOptionClick(option)}
+                                className="text-xs"
+                              >
+                                {option}
+                              </Button>
+                            ))}
+                          </div>
+                        )}
+
+                        {message.link && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2 text-xs w-fit"
+                            onClick={() => window.open(message.link, "_blank", "noopener,noreferrer")}
+                          >
+                            <FileText className="mr-2 h-3 w-3" />
+                            View Official Document
+                          </Button>
+                        )}
+
+                        <div className="flex justify-between items-center mt-1">
+                          <div className="text-xs opacity-60">{formatTime(message.timestamp)}</div>
+
+                          {message.role === "assistant" && message.confidence && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-5 w-5 rounded-full opacity-60 hover:opacity-100"
+                                  >
+                                    <Info className="h-3 w-3" />
+                                    <span className="sr-only">Confidence level</span>
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <div className="text-xs">
+                                    <p className="font-semibold">Confidence: {message.confidence}</p>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
                       </div>
                     </div>
-                  ))
-                )}
-                {isBotTyping && (
-                  <div className="flex items-start space-x-2">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src="/icons/logo.svg" alt="Bot Avatar" />
-                      <AvatarFallback>B</AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <div className="text-sm font-bold">{t("bot")}</div>
-                      <BeatLoader color={theme === "dark" ? "#fff" : "#000"} size={8} />
-                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {isBotTyping && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex justify-start"
+                >
+                  <div className="max-w-[85%] md:max-w-[70%] rounded-lg p-4 bg-muted/70">
+                    <TypingIndicator />
                   </div>
-                )}
-              </ScrollArea>
-            </CardContent>
-            <CardFooter className="flex items-center space-x-2">
-              <div className="flex-1">
-                <form onSubmit={(e) => e.preventDefault()} className="w-full">
-                  <Textarea
-                    placeholder={t("chatbot.placeholder")}
+                </motion.div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input area */}
+            <div className="p-4 border-t">
+              <div className="flex items-center space-x-2 max-w-4xl mx-auto">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    fileInputRef.current?.click()
+                  }}
+                  title="Upload document"
+                >
+                  <Upload className="h-4 w-4" />
+                </Button>
+
+                <div className="relative flex-1">
+                  <Input
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault()
-                        handleSend()
-                      }
-                    }}
-                    className="resize-none border-none outline-none shadow-none focus-visible:ring-0"
-                    disabled={isLoading || !isConfigured}
+                    onKeyDown={handleKeyDown}
+                    placeholder={isConnected ? "Type your message..." : "Connecting..."}
+                    disabled={!isConnected}
+                    className="pr-10"
                   />
-                </form>
-              </div>
-              <Button type="submit" onClick={handleSend} disabled={isLoading || !isConfigured}>
-                {t("send")}
-              </Button>
-            </CardFooter>
-          </Card>
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("loan_products")}</CardTitle>
-                <CardDescription>{t("loan_products_description")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <DataTable columns={columns(t)} data={loan_products} />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("calendar")}</CardTitle>
-                <CardDescription>{t("calendar_description")}</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant={"outline"}
-                      className={cn(
-                        "w-[240px] justify-start text-left font-normal",
-                        !selectedDate && "text-muted-foreground",
-                      )}
-                    >
-                      <Icons.calendar className="mr-2 h-4 w-4" />
-                      {selectedDate ? format(selectedDate, "PPP") : <span>{t("pick_date")}</span>}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={selectedDate}
-                      onSelect={setSelectedDate}
-                      disabled={(date) => date > new Date() || date < new Date("1900-01-01")}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </CardContent>
-            </Card>
-          </div>
-        </main>
-        <footer className="flex w-full shrink-0 items-center justify-center py-2 text-muted-foreground">
-          {t("footer")}
-        </footer>
-        <audio ref={audioRef} style={{ display: "none" }} controls={false} />
-        <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-          <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader>
-              <DialogTitle>{t("settings.title")}</DialogTitle>
-              <DialogDescription>{t("settings.description")}</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="api_key" className="text-right">
-                  {t("settings.api_key")}
-                </Label>
-                <Input id="api_key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="col-span-3" />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="api_url" className="text-right">
-                  {t("settings.api_url")}
-                </Label>
-                <Input id="api_url" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className="col-span-3" />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="model" className="text-right">
-                  {t("settings.model")}
-                </Label>
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Select a model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="mistralai/Mistral-7B-Instruct-v0.2">Mistral-7B-Instruct-v0.2</SelectItem>
-                    <SelectItem value="google/gemma-7b-it">Gemma-7b-it</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="temperature" className="text-right">
-                  {t("settings.temperature")}
-                </Label>
-                <Slider
-                  id="temperature"
-                  defaultValue={[temperature]}
-                  max={1}
-                  step={0.1}
-                  onValueChange={(value) => setTemperature(value[0])}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="top_p" className="text-right">
-                  {t("settings.top_p")}
-                </Label>
-                <Slider
-                  id="top_p"
-                  defaultValue={[topP]}
-                  max={1}
-                  step={0.1}
-                  onValueChange={(value) => setTopP(value[0])}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="frequency_penalty" className="text-right">
-                  {t("settings.frequency_penalty")}
-                </Label>
-                <Slider
-                  id="frequency_penalty"
-                  defaultValue={[frequencyPenalty]}
-                  max={2}
-                  step={0.1}
-                  onValueChange={(value) => setFrequencyPenalty(value[0])}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="presence_penalty" className="text-right">
-                  {t("settings.presence_penalty")}
-                </Label>
-                <Slider
-                  id="presence_penalty"
-                  defaultValue={[presencePenalty]}
-                  max={2}
-                  step={0.1}
-                  onValueChange={(value) => setPresencePenalty(value[0])}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="stream" className="text-right">
-                  {t("settings.stream")}
-                </Label>
-                <Switch
-                  id="stream"
-                  checked={stream}
-                  onCheckedChange={(checked) => setStream(checked)}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="translate" className="text-right">
-                  {t("settings.translate")}
-                </Label>
-                <Switch
-                  id="translate"
-                  checked={translate}
-                  onCheckedChange={(checked) => setTranslate(checked)}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="language" className="text-right">
-                  {t("settings.language")}
-                </Label>
-                <Select value={language} onValueChange={setLanguage}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Select a language" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.keys(languages).map((key) => (
-                      <SelectItem key={key} value={key}>
-                        {languages[key]?.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="is_audio_enabled" className="text-right">
-                  {t("settings.audio")}
-                </Label>
-                <Switch
-                  id="is_audio_enabled"
-                  checked={isAudioEnabled}
-                  onCheckedChange={(checked) => setIsAudioEnabled(checked)}
-                  className="col-span-3"
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-full"
+                    disabled={!isConnected || !input.trim()}
+                    onClick={() => sendMessage(input)}
+                  >
+                    <ArrowUpCircle className="h-5 w-5" />
+                  </Button>
+                </div>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  accept=".pdf,.doc,.docx,.csv"
+                  className="hidden"
                 />
               </div>
             </div>
-            <DialogFooter>
-              <Button type="submit" onClick={() => setIsConfigured(apiKey !== "" && apiUrl !== "")}>
-                {t("save")}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-        <CommandDialog />
-        <Button
-          variant="outline"
-          size="icon"
-          className="absolute bottom-4 right-4"
-          onClick={() => setIsSettingsOpen(true)}
-        >
-          <Icons.settings className="h-4 w-4" />
-          <span>{t("settings.title")}</span>
-        </Button>
+          </div>
+
+          {/* Sidebar - Hidden on mobile */}
+          <div className="hidden md:block w-80 lg:w-96 border-l overflow-y-auto">
+            <div className="h-full flex flex-col">
+              <div className="p-4 border-b">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-lg font-semibold flex items-center">
+                    <Sparkles className="mr-2 h-5 w-5 text-indigo-600" />
+                    Financial Dashboard
+                  </h2>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleRefreshData}
+                    title="Refresh data"
+                    disabled={isFetchingData}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isFetchingData ? "animate-spin" : ""}`} />
+                  </Button>
+                </div>
+              </div>
+
+              <Tabs defaultValue="info" className="flex-1">
+                <TabsList className="grid grid-cols-3 ">
+                  <TabsTrigger value="info">Loan Info</TabsTrigger>
+                  <TabsTrigger value="rates">Rates</TabsTrigger>
+                  <TabsTrigger value="history">History</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="info" className="p-4 space-y-4 overflow-auto">
+                  {loanInfo.loan_type ? (
+                    <div className="space-y-4">
+                      <Card>
+                        <CardHeader className="py-3">
+                          <CardTitle>Loan Type</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p>{loanInfo.loan_type}</p>
+                        </CardContent>
+                      </Card>
+
+                      {loanInfo.interest_rate && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Interest Rate</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p>{loanInfo.interest_rate}</p>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {loanInfo.eligibility && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Eligibility</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {loanInfo.repayment_options && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Repayment Options</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {loanInfo.additional_info && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Additional Information</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ReactMarkdown>{loanInfo.additional_info}</ReactMarkdown>
+                          </CardContent>
+                        </Card>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <LayoutDashboard className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                      <p>No loan information available yet</p>
+                      <p className="text-sm">Ask about specific loans to see details here</p>
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="rates" className="p-4 overflow-auto">
+                  <div className="space-y-4">
+                    {interestRates.length > 0 ? (
+                      interestRates.map((rate, index) => (
+                        <Card key={index}>
+                          <CardHeader className="py-3">
+                            <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
+                          </CardHeader>
+                          <CardContent className="pb-4">
+                            <div className="flex justify-between items-center mb-2">
+                              <span>Min</span>
+                              <span>Max</span>
+                            </div>
+                            <div className="relative h-9 w-full bg-muted rounded-lg">
+                              <div
+                                className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
+                                style={{ width: "100%" }}
+                              ></div>
+                              <div className="absolute inset-0 flex justify-between items-center px-3">
+                                <Badge variant="secondary">{rate.min_rate}%</Badge>
+                                <Badge variant="secondary">{rate.max_rate}%</Badge>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground">
+                        {isFetchingData ? (
+                          <div className="flex flex-col items-center">
+                            <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                            <p>Fetching interest rates...</p>
+                          </div>
+                        ) : (
+                          <>
+                            <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                            <p>Interest rate data unavailable</p>
+                            <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              Refresh Data
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="history" className="p-4 overflow-auto">
+                  <div className="space-y-4">
+                    <Card>
+                      <CardHeader className="py-3">
+                        <CardTitle className="flex items-center">
+                          <Clock className="mr-2 h-4 w-4" />
+                          Recent Queries
+                        </CardTitle>
+                        <CardDescription>Recently asked loan questions</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        {recentQueries.length > 0 ? (
+                          <div className="space-y-3">
+                            {recentQueries.map((query) => (
+                              <div key={query.id} className="flex items-start space-x-2 pb-3 border-b last:border-0">
+                                <MessageSquareText className="h-4 w-4 mt-1 text-muted-foreground" />
+                                <div className="flex-1">
+                                  <p className="text-sm">{query.query}</p>
+                                  <div className="flex items-center mt-1">
+                                    <Badge variant="outline" className="text-xs mr-2">
+                                      {query.loan_type}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      {getTimeAgo(new Date(query.timestamp))}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 text-muted-foreground">
+                            {isFetchingData ? (
+                              <div className="flex justify-center">
+                                <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
+                              </div>
+                            ) : (
+                              <p className="text-sm">No recent queries</p>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="py-3">
+                        <CardTitle className="flex items-center">
+                          <Lightbulb className="mr-2 h-4 w-4 text-yellow-500" />
+                          Financial Tips
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {financialTips.length > 0 ? (
+                          <div className="space-y-3">
+                            {financialTips.map((tip, index) => (
+                              <div key={index} className="flex">
+                                <div className="mr-3 mt-0.5">
+                                  <span className="flex h-2 w-2 bg-indigo-600 rounded-full"></span>
+                                </div>
+                                <p className="text-sm">{tip}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 text-muted-foreground">
+                            {isFetchingData ? (
+                              <div className="flex justify-center">
+                                <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
+                              </div>
+                            ) : (
+                              <>
+                                <p className="text-sm">No tips available</p>
+                                <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                  <RefreshCw className="mr-2 h-4 w-4" />
+                                  Refresh Data
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+              </Tabs>
+
+              <div className="p-4 border-t space-y-3 mt-auto">
+                <Button
+                  onClick={() => {
+                    fileInputRef.current?.click()
+                  }}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <Upload className="mr-2 h-4 w-4" /> Upload Document
+                </Button>
+
+                <Button onClick={downloadSummary} className="w-full" variant="outline">
+                  <Download className="mr-2 h-4 w-4" /> Download Summary
+                </Button>
+
+                <Button onClick={handleSignOut} className="w-full" variant="outline">
+                  <LogOut className="mr-2 h-4 w-4" /> Sign Out
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Voice mode content */}
+        {isVoiceMode && (
+          <Drawer open={true} onOpenChange={setIsVoiceMode}>
+            <DrawerContent>
+              <DrawerHeader>
+                <DrawerTitle>Voice Mode</DrawerTitle>
+                <DrawerDescription>Speak to your financial advisor</DrawerDescription>
+              </DrawerHeader>
+              <div className="p-4 text-center">
+                <div
+                  className={`mx-auto w-24 h-24 rounded-full flex items-center justify-center mb-4 ${
+                    isRecording
+                      ? "bg-red-100 dark:bg-red-900 animate-pulse"
+                      : isPlaying
+                        ? "bg-blue-100 dark:bg-blue-900"
+                        : "bg-indigo-100 dark:bg-indigo-950"
+                  }`}
+                >
+                  {isRecording ? (
+                    <Mic className="h-10 w-10 text-red-600 dark:text-red-400" />
+                  ) : isPlaying ? (
+                    <MessageSquareText className="h-10 w-10 text-blue-600 dark:text-blue-400" />
+                  ) : (
+                    <Mic className="h-10 w-10 text-indigo-600 dark:text-indigo-400" />
+                  )}
+                </div>
+
+                <div className="flex items-center justify-center mb-4">
+                  <div className={`w-3 h-3 rounded-full mr-2 ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">
+                    {isRecording
+                      ? isSpeaking
+                        ? "I can hear you speaking"
+                        : "Listening for your voice..."
+                      : isPlaying
+                        ? "AI is speaking"
+                        : "Ready to listen"}
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="autoDetectLanguage"
+                      checked={autoDetectLanguage}
+                      onChange={() => setAutoDetectLanguage(!autoDetectLanguage)}
+                      className="mr-1"
+                    />
+                    <label htmlFor="autoDetectLanguage" className="text-sm">
+                      Auto-detect language
+                    </label>
+                  </div>
+
+                  {!autoDetectLanguage && (
+                    <div className="flex justify-center">
+                      <select
+                        value={language}
+                        onChange={(e) => setLanguage(e.target.value)}
+                        className="border rounded p-1 text-sm"
+                      >
+                        {languages.map((lang) => (
+                          <option key={lang.code} value={lang.code}>
+                            {lang.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="flex justify-center space-x-3">
+                    <Button
+                      variant={isRecording ? "destructive" : "default"}
+                      onClick={isRecording ? stopVoiceChat : startVoiceChat}
+                      disabled={isPlaying}
+                      className="flex items-center"
+                    >
+                      {isRecording ? (
+                        <>
+                          <MicOff className="mr-2 h-4 w-4" /> Stop Recording
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="mr-2 h-4 w-4" /> Start Recording
+                        </>
+                      )}
+                    </Button>
+
+                    <Button variant="outline" onClick={() => setIsVoiceMode(false)}>
+                      Switch to Text Mode
+                    </Button>
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsDrawerOpen(true)}
+                    className="text-xs text-muted-foreground"
+                  >
+                    Show Debug Info
+                  </Button>
+                </div>
+              </div>
+            </DrawerContent>
+          </Drawer>
+        )}
+
+        {/* Hidden audio element for playback */}
+        <audio ref={audioRef} className="hidden" />
+
+        {/* Debug section - Toggle with button */}
+        <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
+          <DrawerContent>
+            <DrawerHeader>
+              <DrawerTitle>Debug Information</DrawerTitle>
+              <DrawerDescription>Technical details about the voice processing</DrawerDescription>
+            </DrawerHeader>
+            <div className="p-4 max-h-96 overflow-y-auto">
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">{isSpeaking ? "Speaking detected" : "Silence detected"}</span>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${isPlaying ? "bg-blue-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">{isPlaying ? "AI is speaking" : "AI is silent"}</span>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${isRecording ? "bg-red-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">{isRecording ? "Recording active" : "Recording inactive"}</span>
+                </div>
+
+                <div className="mt-4">
+                  <h3 className="font-semibold mb-2">Debug Logs:</h3>
+                  <div className="bg-muted p-2 rounded text-xs space-y-1 max-h-60 overflow-y-auto">
+                    {debugLogs.map((log, i) => (
+                      <div key={i} className="whitespace-pre-wrap">
+                        {log}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </DrawerContent>
+        </Drawer>
       </div>
-    </LoanInfoProvider>
+    </TooltipProvider>
   )
 }
-
-import Link from "next/link"
-import { format } from "date-fns"
-import { CommandDialog } from "@/components/command-dialog"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 

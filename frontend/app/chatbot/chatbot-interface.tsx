@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { type Socket, io } from "socket.io-client"
 import { AnimatePresence, motion } from "framer-motion"
 import { useTheme } from "next-themes"
@@ -28,6 +28,7 @@ import {
   Clock,
   RefreshCw,
   LogOut,
+  Info,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -47,17 +48,9 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { TypingIndicator } from "@/components/typing-indicator"
 import { useAuth } from "@/components/auth/auth-provider"
-import {
-  fetchInterestRates,
-  fetchRecentQueries,
-  fetchFinancialTips,
-  fetchLoanCategories,
-  fetchFinancialTools,
-  type InterestRate,
-  type RecentQuery,
-} from "@/services/api-service"
+import type { InterestRate, RecentQuery } from "@/services/api-service"
 import { saveChatToHistory } from "@/services/chat-history-service"
-import router from "next/router"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 // Environment variable with fallback
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
@@ -81,6 +74,7 @@ interface Message {
   language?: string
   original_text?: string
   english_text?: string
+  confidence?: number | string | null
 }
 
 // Language options
@@ -118,6 +112,7 @@ export default function ChatbotInterface() {
       content: `Hello${user?.displayName ? ` ${user.displayName}` : ""}! I'm FinMate, your multilingual loan advisor. How can I help you today with loans, financial advice, or eligibility checks?`,
       timestamp: new Date(),
       options: ["Check loan eligibility", "Personal loan information", "Financial tips"],
+      confidence: "High",
     },
   ])
   const [input, setInput] = useState("")
@@ -150,6 +145,7 @@ export default function ChatbotInterface() {
   const [isInConversation, setIsInConversation] = useState(false)
   const [isVoiceServerAvailable, setIsVoiceServerAvailable] = useState(false)
   const [dataRefreshInterval, setDataRefreshInterval] = useState<NodeJS.Timeout | null>(null)
+  const [lastFetchTimestamp, setLastFetchTimestamp] = useState(0)
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -295,6 +291,14 @@ export default function ChatbotInterface() {
 
     // Add the assistant's message to the chat
     if (data.text || (data.res && data.res.msg)) {
+      // Process confidence score
+      let confidenceScore = data.confidence || (data.res && data.res.confidence) || null
+
+      // If confidence is a number string, convert it to a number
+      if (typeof confidenceScore === "string" && !isNaN(Number(confidenceScore))) {
+        confidenceScore = Math.round(Number(confidenceScore))
+      }
+
       setMessages((prev) => [
         ...prev,
         {
@@ -311,6 +315,7 @@ export default function ChatbotInterface() {
           link: data.info?.link || "",
           source: data.res?.source || "",
           similarity: data.res?.similarity || null,
+          confidence: confidenceScore,
         },
       ])
     }
@@ -342,38 +347,56 @@ export default function ChatbotInterface() {
     }
   }
 
-  // Fetch sidebar data
-  const fetchSidebarData = async () => {
+  // Optimized fetchSidebarData function
+  const fetchSidebarData = useCallback(async () => {
+    // Prevent redundant calls within 2 seconds
+    const now = Date.now()
+    if (isFetchingData || now - lastFetchTimestamp < 2000) {
+      return
+    }
+
     setIsFetchingData(true)
+    setLastFetchTimestamp(now)
+
     try {
-      // Fetch interest rates from the real API
-      const ratesData = await fetchInterestRates()
-      setInterestRates(ratesData)
+      // Batch API calls using Promise.all to run them concurrently
+      const [ratesResponse, queriesResponse, tipsResponse, categoriesResponse] = await Promise.all([
+        fetch("/interest-rates"),
+        fetch("/recent-queries"),
+        fetch("/financial-tips"),
+        fetch("/api/loan-categories"),
+        // Removing /api/financial-tools since it's returning 404
+      ])
 
-      // Fetch recent queries from the real API
-      const queriesData = await fetchRecentQueries()
-      setRecentQueries(queriesData)
+      // Process responses
+      if (ratesResponse.ok) {
+        const ratesData = await ratesResponse.json()
+        setInterestRates(ratesData)
+      }
 
-      // Fetch financial tips from the real API
-      const tipsData = await fetchFinancialTips()
-      setFinancialTips(tipsData)
+      if (queriesResponse.ok) {
+        const queriesData = await queriesResponse.json()
+        setRecentQueries(queriesData)
+      }
 
-      // Fetch loan categories from the real API
-      const categoriesData = await fetchLoanCategories()
-      setLoanCategories(categoriesData)
+      if (tipsResponse.ok) {
+        const tipsData = await tipsResponse.json()
+        setFinancialTips(tipsData)
+      }
 
-      // Fetch financial tools from the real API
-      const toolsData = await fetchFinancialTools()
-      setFinancialTools(toolsData)
+      if (categoriesResponse.ok) {
+        const categoriesData = await categoriesResponse.json()
+        setLoanCategories(categoriesData)
+      }
 
-      console.log("Successfully fetched all sidebar data")
+      console.log("Successfully fetched sidebar data")
     } catch (error) {
       console.error("Error fetching sidebar data:", error)
-      toast.error("Failed to fetch some financial data")
+      // Don't show error toast on every failed attempt to avoid spam
     } finally {
       setIsFetchingData(false)
     }
-  }
+  }, [isFetchingData, lastFetchTimestamp])
 
   // Manual refresh of sidebar data
   const handleRefreshData = async () => {
@@ -415,8 +438,8 @@ export default function ChatbotInterface() {
       id: sessionId,
       language: autoDetectLanguage ? "auto" : language,
       auto_detect: autoDetectLanguage,
-      user_id: user?.uid || 'anonymous',
-      user_name: user?.displayName || 'anonymous',
+      user_id: user?.uid || "anonymous",
+      user_name: user?.displayName || "anonymous",
     })
 
     // Save message to chat history
@@ -425,7 +448,7 @@ export default function ChatbotInterface() {
       message,
       loanInfo.loan_type || "General",
       new Date().toISOString(),
-      user?.uid || 'anonymous'
+      user?.uid || "anonymous",
     )
 
     // Refresh the history immediately
@@ -730,8 +753,8 @@ export default function ChatbotInterface() {
             language: autoDetectLanguage ? "auto" : language,
             auto_detect: autoDetectLanguage,
             id: sessionId,
-            user_id: user?.uid || 'anonymous',
-            user_name: user?.displayName || 'anonymous',
+            user_id: user?.uid || "anonymous",
+            user_name: user?.displayName || "anonymous",
           })
 
           // Reset for next recording
@@ -820,848 +843,879 @@ export default function ChatbotInterface() {
   }
 
   return (
-    <div className="flex flex-col h-screen">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-indigo-600 to-purple-600 shadow-md p-3 md:p-4">
-        <div className="container max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-white bg-opacity-20">
-              <CircleDollarSign className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-lg md:text-xl font-bold text-white">FinMate</h1>
-              <div className="flex items-center">
-                <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-400" : "bg-red-400"} mr-2`}></div>
-                <p className="text-xs text-white">{isConnected ? "Connected" : "Disconnecting..."}</p>
+    <TooltipProvider>
+      <div className="flex flex-col h-screen">
+        {/* Header */}
+        <header className="bg-gradient-to-r from-indigo-600 to-purple-600 shadow-md p-3 md:p-4">
+          <div className="container max-w-7xl mx-auto flex justify-between items-center">
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-white bg-opacity-20">
+                <CircleDollarSign className="h-6 w-6 text-white" />
               </div>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            {/* User info */}
-            {user && (
-              <div className="hidden md:flex items-center mr-2">
-                <div className="bg-white bg-opacity-20 rounded-full p-1 mr-2">
-                  {user.photoURL ? (
-                    <img
-                      src={user.photoURL || "/placeholder.svg"}
-                      alt={user.displayName || "User"}
-                      className="w-7 h-7 rounded-full"
-                    />
-                  ) : (
-                    <div className="w-7 h-7 rounded-full bg-indigo-800 flex items-center justify-center text-white text-sm">
-                      {user.displayName ? user.displayName[0].toUpperCase() : "U"}
-                    </div>
-                  )}
+              <div>
+                <h1 className="text-lg md:text-xl font-bold text-white">FinMate</h1>
+                <div className="flex items-center">
+                  <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-400" : "bg-red-400"} mr-2`}></div>
+                  <p className="text-xs text-white">{isConnected ? "Connected" : "Disconnecting..."}</p>
                 </div>
-                <span className="text-white text-sm hidden lg:inline-block">
-                  {user.displayName || user.email || "User"}
-                </span>
               </div>
-            )}
+            </div>
 
-            {/* Language selector */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="text-white hover:bg-white hover:bg-opacity-10">
-                  <Languages className="h-5 w-5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Select Language</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => setAutoDetectLanguage(true)}
-                  className={autoDetectLanguage ? "bg-muted" : ""}
-                >
-                  Auto-detect language
-                  {autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                {languages.map((lang) => (
+            <div className="flex items-center space-x-2">
+              {/* User info */}
+              {user && (
+                <div className="hidden md:flex items-center mr-2">
+                  <div className="bg-white bg-opacity-20 rounded-full p-1 mr-2">
+                    {user.photoURL ? (
+                      <img
+                        src={user.photoURL || "/placeholder.svg"}
+                        alt={user.displayName || "User"}
+                        className="w-7 h-7 rounded-full"
+                      />
+                    ) : (
+                      <div className="w-7 h-7 rounded-full bg-indigo-800 flex items-center justify-center text-white text-sm">
+                        {user.displayName ? user.displayName[0].toUpperCase() : "U"}
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-white text-sm hidden lg:inline-block">
+                    {user.displayName || user.email || "User"}
+                  </span>
+                </div>
+              )}
+
+              {/* Language selector */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="text-white hover:bg-white hover:bg-opacity-10">
+                    <Languages className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Select Language</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    key={lang.code}
-                    onClick={() => {
-                      setLanguage(lang.code)
-                      setAutoDetectLanguage(false)
-                    }}
-                    className={language === lang.code && !autoDetectLanguage ? "bg-muted" : ""}
+                    onClick={() => setAutoDetectLanguage(true)}
+                    className={autoDetectLanguage ? "bg-muted" : ""}
                   >
-                    {lang.name}
-                    {language === lang.code && !autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
+                    Auto-detect language
+                    {autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
                   </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* Theme toggle */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="text-white hover:bg-white hover:bg-opacity-10"
-            >
-              {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            </Button>
-
-            {/* Voice mode toggle */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleToggleVoiceMode}
-              disabled={!isVoiceServerAvailable}
-              title={isVoiceServerAvailable ? "Toggle voice mode" : "Voice mode unavailable"}
-              className="text-white hover:bg-white hover:bg-opacity-10"
-            >
-              {isVoiceMode ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-            </Button>
-
-            {/* Sign out button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleSignOut}
-              className="text-white hover:bg-white hover:bg-opacity-10"
-              title="Sign out"
-            >
-              <LogOut className="h-5 w-5" />
-            </Button>
-
-            {/* Mobile drawer trigger */}
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="text-white hover:bg-white hover:bg-opacity-10 md:hidden">
-                  <Menu className="h-5 w-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right" className="w-[80vw]">
-                <div className="flex flex-col">
-                  {/* User info in mobile menu */}
-                  {user && (
-                    <div className="flex items-center mb-4 pb-4 border-b">
-                      <div className="bg-muted rounded-full p-1 mr-3">
-                        {user.photoURL ? (
-                          <img
-                            src={user.photoURL || "/placeholder.svg"}
-                            alt={user.displayName || "User"}
-                            className="w-10 h-10 rounded-full"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white">
-                            {user.displayName ? user.displayName[0].toUpperCase() : "U"}
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-medium">{user.displayName || "User"}</p>
-                        <p className="text-sm text-muted-foreground">{user.email}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  <h2 className="text-lg font-semibold py-4">Financial Information</h2>
-
-                  <Tabs defaultValue="info" className="flex-1">
-                    <TabsList className="grid grid-cols-3">
-                      <TabsTrigger value="info">Loan Info</TabsTrigger>
-                      <TabsTrigger value="rates">Rates</TabsTrigger>
-                      <TabsTrigger value="tips">Tips</TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="info" className="space-y-4 overflow-auto">
-                      {loanInfo.loan_type ? (
-                        <div className="space-y-4">
-                          <Card>
-                            <CardHeader className="py-2">
-                              <CardTitle>Loan Type</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <p>{loanInfo.loan_type}</p>
-                            </CardContent>
-                          </Card>
-
-                          {loanInfo.interest_rate && (
-                            <Card>
-                              <CardHeader className="py-2">
-                                <CardTitle>Interest Rate</CardTitle>
-                              </CardHeader>
-                              <CardContent>
-                                <p>{loanInfo.interest_rate}</p>
-                              </CardContent>
-                            </Card>
-                          )}
-
-                          {loanInfo.eligibility && (
-                            <Card>
-                              <CardHeader className="py-2">
-                                <CardTitle>Eligibility</CardTitle>
-                              </CardHeader>
-                              <CardContent>
-                                <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
-                              </CardContent>
-                            </Card>
-                          )}
-
-                          {loanInfo.repayment_options && (
-                            <Card>
-                              <CardHeader className="py-2">
-                                <CardTitle>Repayment Options</CardTitle>
-                              </CardHeader>
-                              <CardContent>
-                                <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
-                              </CardContent>
-                            </Card>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-center py-8 text-muted-foreground">
-                          <MessageSquareText className="mx-auto h-12 w-12 opacity-20 mb-2" />
-                          <p>No loan information available yet</p>
-                          <p className="text-sm">Ask about specific loans to see details here</p>
-                        </div>
-                      )}
-                    </TabsContent>
-
-                    <TabsContent value="rates" className="overflow-auto">
-                      <div className="space-y-4">
-                        {interestRates.length > 0 ? (
-                          interestRates.map((rate, index) => (
-                            <Card key={index}>
-                              <CardHeader className="py-2">
-                                <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
-                              </CardHeader>
-                              <CardContent className="pb-4">
-                                <div className="flex justify-between items-center mb-2">
-                                  <span>Min</span>
-                                  <span>Max</span>
-                                </div>
-                                <div className="relative h-7 w-full bg-muted rounded-lg">
-                                  <div
-                                    className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
-                                    style={{ width: "100%" }}
-                                  ></div>
-                                  <div className="absolute inset-0 flex justify-between items-center px-2">
-                                    <Badge variant="secondary">{rate.min_rate}%</Badge>
-                                    <Badge variant="secondary">{rate.max_rate}%</Badge>
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          ))
-                        ) : (
-                          <div className="text-center py-8 text-muted-foreground">
-                            {isFetchingData ? (
-                              <div className="flex flex-col items-center">
-                                <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
-                                <p>Fetching interest rates...</p>
-                              </div>
-                            ) : (
-                              <>
-                                <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
-                                <p>Interest rate data unavailable</p>
-                                <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
-                                  <RefreshCw className="mr-2 h-4 w-4" />
-                                  Refresh Data
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </TabsContent>
-
-                    <TabsContent value="tips" className="overflow-auto">
-                      <div className="space-y-4">
-                        {financialTips.length > 0 ? (
-                          financialTips.map((tip, index) => (
-                            <Card key={index}>
-                              <CardContent className="pt-6">
-                                <div className="flex">
-                                  <div className="mr-4 mt-0.5">
-                                    <Lightbulb className="h-5 w-5 text-yellow-500" />
-                                  </div>
-                                  <p>{tip}</p>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          ))
-                        ) : (
-                          <div className="text-center py-8 text-muted-foreground">
-                            {isFetchingData ? (
-                              <div className="flex flex-col items-center">
-                                <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
-                                <p>Loading financial tips...</p>
-                              </div>
-                            ) : (
-                              <>
-                                <Lightbulb className="mx-auto h-12 w-12 opacity-20 mb-2" />
-                                <p>No financial tips available</p>
-                                <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
-                                  <RefreshCw className="mr-2 h-4 w-4" />
-                                  Refresh Data
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </TabsContent>
-                  </Tabs>
-
-                  <div className="mt-6 space-y-3">
-                    <Button
+                  <DropdownMenuSeparator />
+                  {languages.map((lang) => (
+                    <DropdownMenuItem
+                      key={lang.code}
                       onClick={() => {
-                        fileInputRef.current?.click()
+                        setLanguage(lang.code)
+                        setAutoDetectLanguage(false)
                       }}
-                      className="w-full"
-                      variant="outline"
+                      className={language === lang.code && !autoDetectLanguage ? "bg-muted" : ""}
                     >
-                      <Upload className="mr-2 h-4 w-4" /> Upload Document
-                    </Button>
+                      {lang.name}
+                      {language === lang.code && !autoDetectLanguage && <ChevronRight className="ml-auto h-4 w-4" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-                    <Button onClick={downloadSummary} className="w-full" variant="outline">
-                      <Download className="mr-2 h-4 w-4" /> Download Summary
-                    </Button>
-                    <Button variant="outline" onClick={() => router.push("/pdf-translator")} className="flex items-center">
-                        <FileText className="h-4 w-4 mr-2" />
-                        PDF Translator
-                    </Button>
-                    <Button onClick={handleSignOut} className="w-full" variant="outline">
-                      <LogOut className="mr-2 h-4 w-4" /> Sign Out
-                    </Button>
-
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleFileUpload}
-                      accept=".pdf,.doc,.docx,.csv"
-                      className="hidden"
-                    />
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
-          </div>
-        </div>
-      </header>
-
-      {/* Main content area */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Chat messages area */}
-        <div className="flex-1 flex flex-col h-full">
-          <div className="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
-            <AnimatePresence initial={false}>
-              {messages.map((message) => (
-                <motion.div
-                  key={message.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.2 }}
-                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`relative max-w-[85%] md:max-w-[70%] rounded-lg p-3 ${
-                      message.role === "user" ? "bg-indigo-600 text-white" : "bg-muted/70"
-                    }`}
-                  >
-                    <div className="flex flex-col">
-                      <div className="px-1">
-                        <ReactMarkdown className="prose dark:prose-invert prose-sm max-w-none break-words">
-                          {message.content}
-                        </ReactMarkdown>
-                      </div>
-
-                      {message.options && message.options.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-3">
-                          {message.options.map((option) => (
-                            <Button
-                              key={option}
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleOptionClick(option)}
-                              className="text-xs"
-                            >
-                              {option}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
-
-                      {message.link && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-2 text-xs w-fit"
-                          onClick={() => window.open(message.link, "_blank", "noopener,noreferrer")}
-                        >
-                          <FileText className="mr-2 h-3 w-3" />
-                          View Official Document
-                        </Button>
-                      )}
-
-                      <div className="text-xs opacity-60 mt-1 text-right">{formatTime(message.timestamp)}</div>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-
-            {isBotTyping && (
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex justify-start">
-                <div className="max-w-[85%] md:max-w-[70%] rounded-lg p-4 bg-muted/70">
-                  <TypingIndicator />
-                </div>
-              </motion.div>
-            )}
-
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input area */}
-          <div className="p-4 border-t">
-            <div className="flex items-center space-x-2 max-w-4xl mx-auto">
+              {/* Theme toggle */}
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
-                onClick={() => {
-                  fileInputRef.current?.click()
-                }}
-                title="Upload document"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                className="text-white hover:bg-white hover:bg-opacity-10"
               >
-                <Upload className="h-4 w-4" />
+                {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </Button>
 
-              <div className="relative flex-1">
-                <Input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={isConnected ? "Type your message..." : "Connecting..."}
-                  disabled={!isConnected}
-                  className="pr-10"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-0 top-0 h-full"
-                  disabled={!isConnected || !input.trim()}
-                  onClick={() => sendMessage(input)}
-                >
-                  <ArrowUpCircle className="h-5 w-5" />
-                </Button>
-              </div>
+              {/* Voice mode toggle */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleToggleVoiceMode}
+                disabled={!isVoiceServerAvailable}
+                title={isVoiceServerAvailable ? "Toggle voice mode" : "Voice mode unavailable"}
+                className="text-white hover:bg-white hover:bg-opacity-10"
+              >
+                {isVoiceMode ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+              </Button>
 
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                accept=".pdf,.doc,.docx,.csv"
-                className="hidden"
-              />
+              {/* Sign out button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleSignOut}
+                className="text-white hover:bg-white hover:bg-opacity-10"
+                title="Sign out"
+              >
+                <LogOut className="h-5 w-5" />
+              </Button>
+
+              {/* Mobile drawer trigger */}
+              <Sheet>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-white hover:bg-white hover:bg-opacity-10 md:hidden"
+                  >
+                    <Menu className="h-5 w-5" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="right" className="w-[80vw]">
+                  <div className="flex flex-col">
+                    {/* User info in mobile menu */}
+                    {user && (
+                      <div className="flex items-center mb-4 pb-4 border-b">
+                        <div className="bg-muted rounded-full p-1 mr-3">
+                          {user.photoURL ? (
+                            <img
+                              src={user.photoURL || "/placeholder.svg"}
+                              alt={user.displayName || "User"}
+                              className="w-10 h-10 rounded-full"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white">
+                              {user.displayName ? user.displayName[0].toUpperCase() : "U"}
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-medium">{user.displayName || "User"}</p>
+                          <p className="text-sm text-muted-foreground">{user.email}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <h2 className="text-lg font-semibold py-4">Financial Information</h2>
+
+                    <Tabs defaultValue="info" className="flex-1">
+                      <TabsList className="grid grid-cols-3">
+                        <TabsTrigger value="info">Loan Info</TabsTrigger>
+                        <TabsTrigger value="rates">Rates</TabsTrigger>
+                        <TabsTrigger value="tips">Tips</TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="info" className="space-y-4 overflow-auto">
+                        {loanInfo.loan_type ? (
+                          <div className="space-y-4">
+                            <Card>
+                              <CardHeader className="py-2">
+                                <CardTitle>Loan Type</CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <p>{loanInfo.loan_type}</p>
+                              </CardContent>
+                            </Card>
+
+                            {loanInfo.interest_rate && (
+                              <Card>
+                                <CardHeader className="py-2">
+                                  <CardTitle>Interest Rate</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <p>{loanInfo.interest_rate}</p>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            {loanInfo.eligibility && (
+                              <Card>
+                                <CardHeader className="py-2">
+                                  <CardTitle>Eligibility</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            {loanInfo.repayment_options && (
+                              <Card>
+                                <CardHeader className="py-2">
+                                  <CardTitle>Repayment Options</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
+                                </CardContent>
+                              </Card>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <MessageSquareText className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                            <p>No loan information available yet</p>
+                            <p className="text-sm">Ask about specific loans to see details here</p>
+                          </div>
+                        )}
+                      </TabsContent>
+
+                      <TabsContent value="rates" className="overflow-auto">
+                        <div className="space-y-4">
+                          {interestRates.length > 0 ? (
+                            interestRates.map((rate, index) => (
+                              <Card key={index}>
+                                <CardHeader className="py-2">
+                                  <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
+                                </CardHeader>
+                                <CardContent className="pb-4">
+                                  <div className="flex justify-between items-center mb-2">
+                                    <span>Min</span>
+                                    <span>Max</span>
+                                  </div>
+                                  <div className="relative h-7 w-full bg-muted rounded-lg">
+                                    <div
+                                      className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
+                                      style={{ width: "100%" }}
+                                    ></div>
+                                    <div className="absolute inset-0 flex justify-between items-center px-2">
+                                      <Badge variant="secondary">{rate.min_rate}%</Badge>
+                                      <Badge variant="secondary">{rate.max_rate}%</Badge>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))
+                          ) : (
+                            <div className="text-center py-8 text-muted-foreground">
+                              {isFetchingData ? (
+                                <div className="flex flex-col items-center">
+                                  <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                                  <p>Fetching interest rates...</p>
+                                </div>
+                              ) : (
+                                <>
+                                  <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                                  <p>Interest rate data unavailable</p>
+                                  <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                    <RefreshCw className="mr-2 h-4 w-4" />
+                                    Refresh Data
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="tips" className="overflow-auto">
+                        <div className="space-y-4">
+                          {financialTips.length > 0 ? (
+                            financialTips.map((tip, index) => (
+                              <Card key={index}>
+                                <CardContent className="pt-6">
+                                  <div className="flex">
+                                    <div className="mr-4 mt-0.5">
+                                      <Lightbulb className="h-5 w-5 text-yellow-500" />
+                                    </div>
+                                    <p>{tip}</p>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))
+                          ) : (
+                            <div className="text-center py-8 text-muted-foreground">
+                              {isFetchingData ? (
+                                <div className="flex flex-col items-center">
+                                  <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                                  <p>Loading financial tips...</p>
+                                </div>
+                              ) : (
+                                <>
+                                  <Lightbulb className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                                  <p>No financial tips available</p>
+                                  <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                    <RefreshCw className="mr-2 h-4 w-4" />
+                                    Refresh Data
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+
+                    <div className="mt-6 space-y-3">
+                      <Button onClick={downloadSummary} className="w-full" variant="outline">
+                        <Download className="mr-2 h-4 w-4" /> Download Summary
+                      </Button>
+                      `
+                      <Button onClick={handleSignOut} className="w-full" variant="outline">
+                        <LogOut className="mr-2 h-4 w-4" /> Sign Out
+                      </Button>
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileUpload}
+                        accept=".pdf,.doc,.docx,.csv"
+                        className="hidden"
+                      />
+                    </div>
+                  </div>
+                </SheetContent>
+              </Sheet>
             </div>
           </div>
-        </div>
+        </header>
 
-        {/* Sidebar - Hidden on mobile */}
-        <div className="hidden md:block w-80 lg:w-96 border-l overflow-y-auto">
-          <div className="h-full flex flex-col">
-            <div className="p-4 border-b">
-              <div className="flex justify-between items-center">
-                <h2 className="text-lg font-semibold flex items-center">
-                  <Sparkles className="mr-2 h-5 w-5 text-indigo-600" />
-                  Financial Dashboard
-                </h2>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleRefreshData}
-                  title="Refresh data"
-                  disabled={isFetchingData}
+        {/* Main content area */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Chat messages area */}
+          <div className="flex-1 flex flex-col h-full">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
+              <AnimatePresence initial={false}>
+                {messages.map((message) => (
+                  <motion.div
+                    key={message.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`relative max-w-[85%] md:max-w-[70%] rounded-lg p-3 ${
+                        message.role === "user" ? "bg-indigo-600 text-white" : "bg-muted/70"
+                      }`}
+                    >
+                      <div className="flex flex-col">
+                        <div className="px-1">
+                          <ReactMarkdown className="prose dark:prose-invert prose-sm max-w-none break-words">
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+
+                        {message.options && message.options.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            {message.options.map((option) => (
+                              <Button
+                                key={option}
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleOptionClick(option)}
+                                className="text-xs"
+                              >
+                                {option}
+                              </Button>
+                            ))}
+                          </div>
+                        )}
+
+                        {message.link && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2 text-xs w-fit"
+                            onClick={() => window.open(message.link, "_blank", "noopener,noreferrer")}
+                          >
+                            <FileText className="mr-2 h-3 w-3" />
+                            View Official Document
+                          </Button>
+                        )}
+
+                        <div className="flex justify-between items-center mt-1">
+                          <div className="text-xs opacity-60">{formatTime(message.timestamp)}</div>
+
+                          {message.role === "assistant" && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    className="h-5 rounded-full opacity-60 hover:opacity-100 px-1.5 py-0.5 text-xs"
+                                  >
+                                    <Info className="h-3 w-3 mr-1" />
+                                    {typeof message.confidence === "number"
+                                      ? `${message.confidence}%`
+                                      : message.confidence === "High" ||
+                                          message.confidence === "Medium" ||
+                                          message.confidence === "Low"
+                                        ? `${message.confidence === "High" ? "85" : message.confidence === "Medium" ? "65" : "45"}%`
+                                        : message.confidence || "N/A"}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <div className="text-xs">
+                                    <p className="font-semibold">
+                                      Confidence:{" "}
+                                      {typeof message.confidence === "number"
+                                        ? `${message.confidence}%`
+                                        : message.confidence === "High" ||
+                                            message.confidence === "Medium" ||
+                                            message.confidence === "Low"
+                                          ? `${message.confidence === "High" ? "85" : message.confidence === "Medium" ? "65" : "45"}%`
+                                          : message.confidence || "N/A"}
+                                    </p>
+                                    {message.similarity && (
+                                      <p className="text-muted-foreground">
+                                        Similarity score: {(message.similarity * 100).toFixed(1)}%
+                                      </p>
+                                    )}
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {isBotTyping && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex justify-start"
                 >
-                  <RefreshCw className={`h-4 w-4 ${isFetchingData ? "animate-spin" : ""}`} />
-                </Button>
-              </div>
+                  <div className="max-w-[85%] md:max-w-[70%] rounded-lg p-4 bg-muted/70">
+                    <TypingIndicator />
+                  </div>
+                </motion.div>
+              )}
+
+              <div ref={messagesEndRef} />
             </div>
 
-            <Tabs defaultValue="info" className="flex-1">
-              <TabsList className="grid grid-cols-3 ">
-                <TabsTrigger value="info">Loan Info</TabsTrigger>
-                <TabsTrigger value="rates">Rates</TabsTrigger>
-                <TabsTrigger value="history">History</TabsTrigger>
-              </TabsList>
+            {/* Input area */}
+            <div className="p-4 border-t">
+              <div className="flex items-center space-x-2 max-w-4xl mx-auto">
+                <a href="https://4wfg8tcl-3000.inc1.devtunnels.ms/">
+                  {" "}
+                  <Button variant="outline" size="icon" title="Upload document">
+                    <Upload className="h-4 w-4" />
+                  </Button>
+                </a>
 
-              <TabsContent value="info" className="p-4 space-y-4 overflow-auto">
-                {loanInfo.loan_type ? (
+                <div className="relative flex-1">
+                  <Input
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={isConnected ? "Type your message..." : "Connecting..."}
+                    disabled={!isConnected}
+                    className="pr-10"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-full"
+                    disabled={!isConnected || !input.trim()}
+                    onClick={() => sendMessage(input)}
+                  >
+                    <ArrowUpCircle className="h-5 w-5" />
+                  </Button>
+                </div>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  accept=".pdf,.doc,.docx,.csv"
+                  className="hidden"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Sidebar - Hidden on mobile */}
+          <div className="hidden md:block w-80 lg:w-96 border-l overflow-y-auto">
+            <div className="h-full flex flex-col">
+              <div className="p-4 border-b">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-lg font-semibold flex items-center">
+                    <Sparkles className="mr-2 h-5 w-5 text-indigo-600" />
+                    Financial Dashboard
+                  </h2>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleRefreshData}
+                    title="Refresh data"
+                    disabled={isFetchingData}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isFetchingData ? "animate-spin" : ""}`} />
+                  </Button>
+                </div>
+              </div>
+
+              <Tabs defaultValue="info" className="flex-1">
+                <TabsList className="grid grid-cols-3 ">
+                  <TabsTrigger value="info">Loan Info</TabsTrigger>
+                  <TabsTrigger value="rates">Rates</TabsTrigger>
+                  <TabsTrigger value="history">History</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="info" className="p-4 space-y-4 overflow-auto">
+                  {loanInfo.loan_type ? (
+                    <div className="space-y-4">
+                      <Card>
+                        <CardHeader className="py-3">
+                          <CardTitle>Loan Type</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p>{loanInfo.loan_type}</p>
+                        </CardContent>
+                      </Card>
+
+                      {loanInfo.interest_rate && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Interest Rate</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p>{loanInfo.interest_rate}</p>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {loanInfo.eligibility && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Eligibility</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {loanInfo.repayment_options && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Repayment Options</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {loanInfo.additional_info && (
+                        <Card>
+                          <CardHeader className="py-3">
+                            <CardTitle>Additional Information</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <ReactMarkdown>{loanInfo.additional_info}</ReactMarkdown>
+                          </CardContent>
+                        </Card>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <LayoutDashboard className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                      <p>No loan information available yet</p>
+                      <p className="text-sm">Ask about specific loans to see details here</p>
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="rates" className="p-4 overflow-auto">
+                  <div className="space-y-4">
+                    {interestRates.length > 0 ? (
+                      interestRates.map((rate, index) => (
+                        <Card key={index}>
+                          <CardHeader className="py-3">
+                            <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
+                          </CardHeader>
+                          <CardContent className="pb-4">
+                            <div className="flex justify-between items-center mb-2">
+                              <span>Min</span>
+                              <span>Max</span>
+                            </div>
+                            <div className="relative h-9 w-full bg-muted rounded-lg">
+                              <div
+                                className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
+                                style={{ width: "100%" }}
+                              ></div>
+                              <div className="absolute inset-0 flex justify-between items-center px-3">
+                                <Badge variant="secondary">{rate.min_rate}%</Badge>
+                                <Badge variant="secondary">{rate.max_rate}%</Badge>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground">
+                        {isFetchingData ? (
+                          <div className="flex flex-col items-center">
+                            <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
+                            <p>Fetching interest rates...</p>
+                          </div>
+                        ) : (
+                          <>
+                            <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
+                            <p>Interest rate data unavailable</p>
+                            <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              Refresh Data
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="history" className="p-4 overflow-auto">
                   <div className="space-y-4">
                     <Card>
                       <CardHeader className="py-3">
-                        <CardTitle>Loan Type</CardTitle>
+                        <CardTitle className="flex items-center">
+                          <Clock className="mr-2 h-4 w-4" />
+                          Recent Queries
+                        </CardTitle>
+                        <CardDescription>Recently asked loan questions</CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <p>{loanInfo.loan_type}</p>
+                        {recentQueries.length > 0 ? (
+                          <div className="space-y-3">
+                            {recentQueries.map((query) => (
+                              <div key={query.id} className="flex items-start space-x-2 pb-3 border-b last:border-0">
+                                <MessageSquareText className="h-4 w-4 mt-1 text-muted-foreground" />
+                                <div className="flex-1">
+                                  <p className="text-sm">{query.query}</p>
+                                  <div className="flex items-center mt-1">
+                                    <Badge variant="outline" className="text-xs mr-2">
+                                      {query.loan_type}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      {getTimeAgo(new Date(query.timestamp))}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 text-muted-foreground">
+                            {isFetchingData ? (
+                              <div className="flex justify-center">
+                                <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
+                              </div>
+                            ) : (
+                              <p className="text-sm">No recent queries</p>
+                            )}
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
 
-                    {loanInfo.interest_rate && (
-                      <Card>
-                        <CardHeader className="py-3">
-                          <CardTitle>Interest Rate</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <p>{loanInfo.interest_rate}</p>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {loanInfo.eligibility && (
-                      <Card>
-                        <CardHeader className="py-3">
-                          <CardTitle>Eligibility</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <ReactMarkdown>{loanInfo.eligibility}</ReactMarkdown>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {loanInfo.repayment_options && (
-                      <Card>
-                        <CardHeader className="py-3">
-                          <CardTitle>Repayment Options</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <ReactMarkdown>{loanInfo.repayment_options}</ReactMarkdown>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {loanInfo.additional_info && (
-                      <Card>
-                        <CardHeader className="py-3">
-                          <CardTitle>Additional Information</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <ReactMarkdown>{loanInfo.additional_info}</ReactMarkdown>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <LayoutDashboard className="mx-auto h-12 w-12 opacity-20 mb-2" />
-                    <p>No loan information available yet</p>
-                    <p className="text-sm">Ask about specific loans to see details here</p>
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="rates" className="p-4 overflow-auto">
-                <div className="space-y-4">
-                  {interestRates.length > 0 ? (
-                    interestRates.map((rate, index) => (
-                      <Card key={index}>
-                        <CardHeader className="py-3">
-                          <CardTitle className="capitalize">{rate.loan_type.replace("_", " ")}</CardTitle>
-                        </CardHeader>
-                        <CardContent className="pb-4">
-                          <div className="flex justify-between items-center mb-2">
-                            <span>Min</span>
-                            <span>Max</span>
-                          </div>
-                          <div className="relative h-9 w-full bg-muted rounded-lg">
-                            <div
-                              className="absolute h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg opacity-80"
-                              style={{ width: "100%" }}
-                            ></div>
-                            <div className="absolute inset-0 flex justify-between items-center px-3">
-                              <Badge variant="secondary">{rate.min_rate}%</Badge>
-                              <Badge variant="secondary">{rate.max_rate}%</Badge>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      {isFetchingData ? (
-                        <div className="flex flex-col items-center">
-                          <RefreshCw className="h-10 w-10 animate-spin mb-4 opacity-30" />
-                          <p>Fetching interest rates...</p>
-                        </div>
-                      ) : (
-                        <>
-                          <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
-                          <p>Interest rate data unavailable</p>
-                          <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
-                            <RefreshCw className="mr-2 h-4 w-4" />
-                            Refresh Data
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </TabsContent>
-
-              <TabsContent value="history" className="p-4 overflow-auto">
-                <div className="space-y-4">
-                  <Card>
-                    <CardHeader className="py-3">
-                      <CardTitle className="flex items-center">
-                        <Clock className="mr-2 h-4 w-4" />
-                        Recent Queries
-                      </CardTitle>
-                      <CardDescription>Recently asked loan questions</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      {recentQueries.length > 0 ? (
-                        <div className="space-y-3">
-                          {recentQueries.map((query) => (
-                            <div key={query.id} className="flex items-start space-x-2 pb-3 border-b last:border-0">
-                              <MessageSquareText className="h-4 w-4 mt-1 text-muted-foreground" />
-                              <div className="flex-1">
-                                <p className="text-sm">{query.query}</p>
-                                <div className="flex items-center mt-1">
-                                  <Badge variant="outline" className="text-xs mr-2">
-                                    {query.loan_type}
-                                  </Badge>
-                                  <span className="text-xs text-muted-foreground">
-                                    {getTimeAgo(new Date(query.timestamp))}
-                                  </span>
+                    <Card>
+                      <CardHeader className="py-3">
+                        <CardTitle className="flex items-center">
+                          <Lightbulb className="mr-2 h-4 w-4 text-yellow-500" />
+                          Financial Tips
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {financialTips.length > 0 ? (
+                          <div className="space-y-3">
+                            {financialTips.map((tip, index) => (
+                              <div key={index} className="flex">
+                                <div className="mr-3 mt-0.5">
+                                  <span className="flex h-2 w-2 bg-indigo-600 rounded-full"></span>
                                 </div>
+                                <p className="text-sm">{tip}</p>
                               </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-center py-4 text-muted-foreground">
-                          {isFetchingData ? (
-                            <div className="flex justify-center">
-                              <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
-                            </div>
-                          ) : (
-                            <p className="text-sm">No recent queries</p>
-                          )}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="py-3">
-                      <CardTitle className="flex items-center">
-                        <Lightbulb className="mr-2 h-4 w-4 text-yellow-500" />
-                        Financial Tips
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {financialTips.length > 0 ? (
-                        <div className="space-y-3">
-                          {financialTips.map((tip, index) => (
-                            <div key={index} className="flex">
-                              <div className="mr-3 mt-0.5">
-                                <span className="flex h-2 w-2 bg-indigo-600 rounded-full"></span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 text-muted-foreground">
+                            {isFetchingData ? (
+                              <div className="flex justify-center">
+                                <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
                               </div>
-                              <p className="text-sm">{tip}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-center py-4 text-muted-foreground">
-                          {isFetchingData ? (
-                            <div className="flex justify-center">
-                              <RefreshCw className="h-5 w-5 animate-spin opacity-30" />
-                            </div>
-                          ) : (
-                            <>
-                              <p className="text-sm">No tips available</p>
-                              <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
-                                <RefreshCw className="mr-2 h-4 w-4" />
-                                Refresh Data
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
-              </TabsContent>
-            </Tabs>
+                            ) : (
+                              <>
+                                <p className="text-sm">No tips available</p>
+                                <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                  <RefreshCw className="mr-2 h-4 w-4" />
+                                  Refresh Data
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+              </Tabs>
 
-            <div className="p-4 border-t space-y-3 mt-auto">
-              <Button
-                onClick={() => {
-                  fileInputRef.current?.click()
-                }}
-                className="w-full"
-                variant="outline"
-              >
-                <Upload className="mr-2 h-4 w-4" /> Upload Document
-              </Button>
+              <div className="p-4 border-t space-y-3 mt-auto">
+                <a href="https://4wfg8tcl-3000.inc1.devtunnels.ms/">
+                  <Button className="w-full" variant="outline">
+                    <Upload className="mr-2 h-4 w-4" /> Upload Document
+                  </Button>
+                </a>
 
-              <Button onClick={downloadSummary} className="w-full" variant="outline">
-                <Download className="mr-2 h-4 w-4" /> Download Summary
-              </Button>
+                <Button onClick={downloadSummary} className="w-full" variant="outline">
+                  <Download className="mr-2 h-4 w-4" /> Download Summary
+                </Button>
 
-              <Button onClick={handleSignOut} className="w-full" variant="outline">
-                <LogOut className="mr-2 h-4 w-4" /> Sign Out
-              </Button>
+                <Button onClick={handleSignOut} className="w-full" variant="outline">
+                  <LogOut className="mr-2 h-4 w-4" /> Sign Out
+                </Button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Voice mode content */}
-      {isVoiceMode && (
-        <Drawer open={true} onOpenChange={setIsVoiceMode}>
+        {/* Voice mode content */}
+        {isVoiceMode && (
+          <Drawer open={true} onOpenChange={setIsVoiceMode}>
+            <DrawerContent>
+              <DrawerHeader>
+                <DrawerTitle>Voice Mode</DrawerTitle>
+                <DrawerDescription>Speak to your financial advisor</DrawerDescription>
+              </DrawerHeader>
+              <div className="p-4 text-center">
+                <div
+                  className={`mx-auto w-24 h-24 rounded-full flex items-center justify-center mb-4 ${
+                    isRecording
+                      ? "bg-red-100 dark:bg-red-900 animate-pulse"
+                      : isPlaying
+                        ? "bg-blue-100 dark:bg-blue-900"
+                        : "bg-indigo-100 dark:bg-indigo-950"
+                  }`}
+                >
+                  {isRecording ? (
+                    <Mic className="h-10 w-10 text-red-600 dark:text-red-400" />
+                  ) : isPlaying ? (
+                    <MessageSquareText className="h-10 w-10 text-blue-600 dark:text-blue-400" />
+                  ) : (
+                    <Mic className="h-10 w-10 text-indigo-600 dark:text-indigo-400" />
+                  )}
+                </div>
+
+                <div className="flex items-center justify-center mb-4">
+                  <div className={`w-3 h-3 rounded-full mr-2 ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">
+                    {isRecording
+                      ? isSpeaking
+                        ? "I can hear you speaking"
+                        : "Listening for your voice..."
+                      : isPlaying
+                        ? "AI is speaking"
+                        : "Ready to listen"}
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="autoDetectLanguage"
+                      checked={autoDetectLanguage}
+                      onChange={() => setAutoDetectLanguage(!autoDetectLanguage)}
+                      className="mr-1"
+                    />
+                    <label htmlFor="autoDetectLanguage" className="text-sm">
+                      Auto-detect language
+                    </label>
+                  </div>
+
+                  {!autoDetectLanguage && (
+                    <div className="flex justify-center">
+                      <select
+                        value={language}
+                        onChange={(e) => setLanguage(e.target.value)}
+                        className="border rounded p-1 text-sm"
+                      >
+                        {languages.map((lang) => (
+                          <option key={lang.code} value={lang.code}>
+                            {lang.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="flex justify-center space-x-3">
+                    <Button
+                      variant={isRecording ? "destructive" : "default"}
+                      onClick={isRecording ? stopVoiceChat : startVoiceChat}
+                      disabled={isPlaying}
+                      className="flex items-center"
+                    >
+                      {isRecording ? (
+                        <>
+                          <MicOff className="mr-2 h-4 w-4" /> Stop Recording
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="mr-2 h-4 w-4" /> Start Recording
+                        </>
+                      )}
+                    </Button>
+
+                    <Button variant="outline" onClick={() => setIsVoiceMode(false)}>
+                      Switch to Text Mode
+                    </Button>
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsDrawerOpen(true)}
+                    className="text-xs text-muted-foreground"
+                  >
+                    Show Debug Info
+                  </Button>
+                </div>
+              </div>
+            </DrawerContent>
+          </Drawer>
+        )}
+
+        {/* Hidden audio element for playback */}
+        <audio ref={audioRef} className="hidden" />
+
+        {/* Debug section - Toggle with button */}
+        <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
           <DrawerContent>
             <DrawerHeader>
-              <DrawerTitle>Voice Mode</DrawerTitle>
-              <DrawerDescription>Speak to your financial advisor</DrawerDescription>
+              <DrawerTitle>Debug Information</DrawerTitle>
+              <DrawerDescription>Technical details about the voice processing</DrawerDescription>
             </DrawerHeader>
-            <div className="p-4 text-center">
-              <div
-                className={`mx-auto w-24 h-24 rounded-full flex items-center justify-center mb-4 ${
-                  isRecording
-                    ? "bg-red-100 dark:bg-red-900 animate-pulse"
-                    : isPlaying
-                      ? "bg-blue-100 dark:bg-blue-900"
-                      : "bg-indigo-100 dark:bg-indigo-950"
-                }`}
-              >
-                {isRecording ? (
-                  <Mic className="h-10 w-10 text-red-600 dark:text-red-400" />
-                ) : isPlaying ? (
-                  <MessageSquareText className="h-10 w-10 text-blue-600 dark:text-blue-400" />
-                ) : (
-                  <Mic className="h-10 w-10 text-indigo-600 dark:text-indigo-400" />
-                )}
-              </div>
-
-              <div className="flex items-center justify-center mb-4">
-                <div className={`w-3 h-3 rounded-full mr-2 ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
-                <span className="text-sm">
-                  {isRecording
-                    ? isSpeaking
-                      ? "I can hear you speaking"
-                      : "Listening for your voice..."
-                    : isPlaying
-                      ? "AI is speaking"
-                      : "Ready to listen"}
-                </span>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="autoDetectLanguage"
-                    checked={autoDetectLanguage}
-                    onChange={() => setAutoDetectLanguage(!autoDetectLanguage)}
-                    className="mr-1"
-                  />
-                  <label htmlFor="autoDetectLanguage" className="text-sm">
-                    Auto-detect language
-                  </label>
+            <div className="p-4 max-h-96 overflow-y-auto">
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">{isSpeaking ? "Speaking detected" : "Silence detected"}</span>
                 </div>
 
-                {!autoDetectLanguage && (
-                  <div className="flex justify-center">
-                    <select
-                      value={language}
-                      onChange={(e) => setLanguage(e.target.value)}
-                      className="border rounded p-1 text-sm"
-                    >
-                      {languages.map((lang) => (
-                        <option key={lang.code} value={lang.code}>
-                          {lang.name}
-                        </option>
-                      ))}
-                    </select>
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${isPlaying ? "bg-blue-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">{isPlaying ? "AI is speaking" : "AI is silent"}</span>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${isRecording ? "bg-red-500" : "bg-gray-300"}`}></div>
+                  <span className="text-sm">{isRecording ? "Recording active" : "Recording inactive"}</span>
+                </div>
+
+                <div className="mt-4">
+                  <h3 className="font-semibold mb-2">Debug Logs:</h3>
+                  <div className="bg-muted p-2 rounded text-xs space-y-1 max-h-60 overflow-y-auto">
+                    {debugLogs.map((log, i) => (
+                      <div key={i} className="whitespace-pre-wrap">
+                        {log}
+                      </div>
+                    ))}
                   </div>
-                )}
-
-                <div className="flex justify-center space-x-3">
-                  <Button
-                    variant={isRecording ? "destructive" : "default"}
-                    onClick={isRecording ? stopVoiceChat : startVoiceChat}
-                    disabled={isPlaying}
-                    className="flex items-center"
-                  >
-                    {isRecording ? (
-                      <>
-                        <MicOff className="mr-2 h-4 w-4" /> Stop Recording
-                      </>
-                    ) : (
-                      <>
-                        <Mic className="mr-2 h-4 w-4" /> Start Recording
-                      </>
-                    )}
-                  </Button>
-
-                  <Button variant="outline" onClick={() => setIsVoiceMode(false)}>
-                    Switch to Text Mode
-                  </Button>
                 </div>
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setIsDrawerOpen(true)}
-                  className="text-xs text-muted-foreground"
-                >
-                  Show Debug Info
-                </Button>
               </div>
             </div>
           </DrawerContent>
         </Drawer>
-      )}
-
-      {/* Hidden audio element for playback */}
-      <audio ref={audioRef} className="hidden" />
-
-      {/* Debug section - Toggle with button */}
-      <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
-        <DrawerContent>
-          <DrawerHeader>
-            <DrawerTitle>Debug Information</DrawerTitle>
-            <DrawerDescription>Technical details about the voice processing</DrawerDescription>
-          </DrawerHeader>
-          <div className="p-4 max-h-96 overflow-y-auto">
-            <div className="space-y-2">
-              <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${isSpeaking ? "bg-green-500" : "bg-gray-300"}`}></div>
-                <span className="text-sm">{isSpeaking ? "Speaking detected" : "Silence detected"}</span>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${isPlaying ? "bg-blue-500" : "bg-gray-300"}`}></div>
-                <span className="text-sm">{isPlaying ? "AI is speaking" : "AI is silent"}</span>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${isRecording ? "bg-red-500" : "bg-gray-300"}`}></div>
-                <span className="text-sm">{isRecording ? "Recording active" : "Recording inactive"}</span>
-              </div>
-
-              <div className="mt-4">
-                <h3 className="font-semibold mb-2">Debug Logs:</h3>
-                <div className="bg-muted p-2 rounded text-xs space-y-1 max-h-60 overflow-y-auto">
-                  {debugLogs.map((log, i) => (
-                    <div key={i} className="whitespace-pre-wrap">
-                      {log}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </DrawerContent>
-      </Drawer>
-    </div>
+      </div>
+    </TooltipProvider>
   )
 }
 

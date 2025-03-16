@@ -43,7 +43,7 @@ def init_mongo(app):
         print("Failed to connect to MongoDB")
 
 # Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "pcsk_a3nGH_2C5f2D2Nd1uNb6GVSDSer3SaaJFXZZKzaHjxhmXHjwnx2SNm5ScYs8udYHfudoP")
 pinecone = Pinecone(api_key=PINECONE_API_KEY)
 
 # Loan Categories Route
@@ -65,147 +65,10 @@ def get_loan_categories():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Financial Tools Route
-@sidebar_bp.route('/api/financial-tools', methods=['GET'])
-def get_financial_tools():
-    """Get available financial tools for the sidebar."""
-    try:
-        tools = [
-            {"id": "emi_calculator", "name": "EMI Calculator", "icon": "calculate"},
-            {"id": "eligibility_checker", "name": "Loan Eligibility Checker", "icon": "check_circle"},
-            {"id": "interest_comparison", "name": "Interest Rate Comparison", "icon": "compare_arrows"},
-            {"id": "credit_score", "name": "Credit Score Analysis", "icon": "analytics"},
-            {"id": "debt_consolidation", "name": "Debt Consolidation Planner", "icon": "account_balance_wallet"}
-        ]
-        return jsonify(tools)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
-# Recent Loan Queries Route
-@sidebar_bp.route('/api/recent-queries', methods=['GET'])
-def get_recent_queries():
-    """Get recent loan queries for the sidebar."""
-    try:
-        if db:
-            # Get recent loan queries from database
-            recent_queries = list(db.loan_queries.find().sort('timestamp', -1).limit(5))
-            
-            # Format for response
-            formatted_queries = []
-            for query in recent_queries:
-                time_diff = datetime.utcnow() - query.get('timestamp', datetime.utcnow())
-                hours_ago = time_diff.total_seconds() / 3600
-                
-                formatted_queries.append({
-                    'id': str(query.get('_id', '')),
-                    'query': query.get('query', 'Loan Query'),
-                    'loan_type': query.get('loan_type', 'General'),
-                    'hours_ago': round(hours_ago, 1)
-                })
-                
-            return jsonify(formatted_queries)
-        else:
-            # Return placeholder data if DB not available
-            return jsonify([{"id": "1", "query": "Home loan interest rates", "loan_type": "Home Loan", "hours_ago": 0.5},
-                            {"id": "2", "query": "Car loan eligibility", "loan_type": "Car Loan", "hours_ago": 2.3},
-                            {"id": "3", "query": "Education loan documents", "loan_type": "Education Loan", "hours_ago": 3.1}])
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
-# Loan Interest Rates Route
-@sidebar_bp.route('/api/interest-rates', methods=['GET'])
-def get_interest_rates():
-    """Get current loan interest rates from Pinecone."""
-    try:
-        # Create a structured query to get loan interest rates
-        index = pinecone.Index("finmate-index")
-        query_response = index.query(
-            vector=[0] * 1536,  # You can use a semantic vector for "loan interest rates" here
-            filter={
-                "type": "interest_rate"
-            },
-            top_k=10,
-            include_metadata=True
-        )
-        
-        # Process Pinecone response to extract interest rates
-        rates = []
-        if query_response and query_response.matches:
-            for match in query_response.matches:
-                if match.metadata and 'loan_type' in match.metadata:
-                    rates.append({
-                        "loan_type": match.metadata.get("loan_type"),
-                        "min_rate": match.metadata.get("min_rate"),
-                        "max_rate": match.metadata.get("max_rate")
-                    })
-        
-        if not rates:
-            # If we didn't get any rates from Pinecone, use a semantic search approach
-            from langchain.vectorstores import Pinecone as LangchainPinecone
-            from langchain.embeddings import OpenAIEmbeddings
-            
-            embeddings = OpenAIEmbeddings()
-            vectorstore = LangchainPinecone(
-                index=index,
-                embedding=embeddings,
-                text_key="text"
-            )
-            
-            docs = vectorstore.similarity_search(
-                "current loan interest rates for different loan types",
-                k=5
-            )
-            
-            # Process docs to extract rates using LLM
-            prompt = f"Extract current interest rates for different loan types from this data: {docs}"
-            response = sidebar_llm.invoke(prompt)
-            
-            # Parse the LLM response to extract structured rates
-            # This depends on how your LLM formats the response
-            # Basic implementation - expects a JSON-like response or structured text
-            
-            # For demonstration, assuming we can extract structured data:
-            import re
-            text = response.content
-            
-            # Extract loan types and rates
-            for loan_type in ["Home Loan", "Personal Loan", "Car Loan", "Education Loan"]:
-                pattern = f"{loan_type}.*?(\d+\.?\d*)%.*?(\d+\.?\d*)%"
-                match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-                if match:
-                    rates.append({
-                        "loan_type": loan_type,
-                        "min_rate": float(match.group(1)),
-                        "max_rate": float(match.group(2))
-                    })
-        
-        return jsonify(rates)
-    
-    except Exception as e:
-        print(f"Error fetching interest rates from Pinecone: {str(e)}")
-        return jsonify({"error": f"Failed to retrieve interest rates: {str(e)}"}), 500
 
-# Financial Tips Route
-@sidebar_bp.route('/api/financial-tips', methods=['GET'])
-def get_financial_tips():
-    """Get random financial tips for the sidebar."""
-    tips = [
-        "Maintain a credit score above 750 for the best loan interest rates.",
-        "Compare offers from multiple lenders before finalizing your loan.",
-        "Pay more than the minimum EMI when possible to reduce your loan tenure.",
-        "Check for hidden charges and processing fees when evaluating loan offers.",
-        "Consider a loan with no prepayment penalties if you plan to close early.",
-        "Set up automatic payments to avoid missing EMI due dates.",
-        "Consolidate multiple high-interest loans into a single lower-interest loan.",
-        "Maintain a debt-to-income ratio below 40%\ for better loan approval chances.",
-        "Review your loan statements regularly to track your progress.",
-        "Refinance your loan when interest rates drop significantly."
-    ]
-    
-    # Return 3 random tips
-    import random
-    selected_tips = random.sample(tips, min(3, len(tips)))
-    return jsonify(selected_tips)
+
 
 # Add loan query to recent queries (called from chat_model.py)
 def add_loan_query(query, loan_type="General"):

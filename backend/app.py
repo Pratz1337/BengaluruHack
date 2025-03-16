@@ -18,7 +18,6 @@ import numpy as np
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from chat_history import chat_history_bp
 
 def init_app(app):
     mongo.init_app(app)
@@ -401,7 +400,6 @@ def upload_document():
                 os.remove(temp_path)
             except:
                 pass
-app.register_blueprint(chat_history_bp)
 
 @socketio.on('save_chat_history')
 def handle_save_chat(data):
@@ -595,7 +593,7 @@ def check_voice_support():
 def get_interest_rates():
     try:
         # Initialize Pinecone with API key
-        pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG")
+        pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_a3nGH_2C5f2D2Nd1uNb6GVSDSer3SaaJFXZZKzaHjxhmXHjwnx2SNm5ScYs8udYHfudoP")
         vector_search = PineconeRAGPipeline(
             pinecone_api_key=pinecone_api_key,
             assistant_name="finmate-assistant"
@@ -812,72 +810,98 @@ def get_loan_categories():
         return jsonify({"error": str(e)}), 500
 
 # Financial Tools Route
-@app.route('/api/financial-tools', methods=['GET'])
-def get_financial_tools():
-    """Get available financial tools for the sidebar."""
-    try:
-        # Fetch tools from database if available
-        if mongo.db:
-            financial_tools = list(mongo.db.financial_tools.find({}, {'_id': 0}))
-            if financial_tools:
-                return jsonify(financial_tools)
-        
-        # Default tools if not found in database
-        tools = [
-            {"id": "emi_calculator", "name": "EMI Calculator", "icon": "calculate"},
-            {"id": "eligibility_checker", "name": "Loan Eligibility Checker", "icon": "check_circle"},
-            {"id": "interest_comparison", "name": "Interest Rate Comparison", "icon": "compare_arrows"},
-            {"id": "credit_score", "name": "Credit Score Analysis", "icon": "analytics"},
-            {"id": "debt_consolidation", "name": "Debt Consolidation Planner", "icon": "account_balance_wallet"}
-        ]
-        return jsonify(tools)
-    except Exception as e:
-        logger.error(f"Error fetching financial tools: {str(e)}")
-        return jsonify({"error": str(e)}), 500
 
-# Updated Interest rates endpoint to use real data from Pinecone
-@app.route('/api/interest-rates', methods=['GET'])
-def get_api_interest_rates():
+
+from pdf_parse_and_trans import parse_pdf_with_sarvam, extract_text_from_xml, ask_llm_about_pdf, translate_text_chunked
+
+@app.route('/parse-and-analyze-pdf', methods=['POST'])
+def parse_and_analyze_pdf():
+    """Parse a PDF file, extract text, and optionally analyze it or translate it."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+    target_lang = request.form.get("target_lang", "en-IN")
+    page_number = request.form.get("page_number", None)
+    question = request.form.get("question", None)
+    parse_mode = request.form.get("parse_mode", "small")
+    
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+    
     try:
-        # Initialize Pinecone with your API key
-        pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG")
-        vector_search = PineconeRAGPipeline(
-            pinecone_api_key=pinecone_api_key,
-            assistant_name="finmate-assistant"
+        # Create a temporary file to save the uploaded content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            file.save(temp_file.name)
+            temp_path = temp_file.name
+        
+        logger.info(f"Parsing PDF: {file.filename} with Sarvam AI...")
+        # Parse PDF using Sarvam AI
+        decoded_xml = parse_pdf_with_sarvam(
+            pdf_path=temp_path, 
+            page_number=page_number,
+            sarvam_mode=parse_mode,
+            prompt_caching="true",
+            api_key=SARVAM_API_KEY
         )
         
-        try:
-            # Query Pinecone for current interest rates
-            query_result = vector_search.query_assistant("current loan interest rates", verbose=False)
+        # Extract text from XML
+        extracted_text = extract_text_from_xml(decoded_xml)
+        
+        result = {
+            "success": True,
+            "filename": file.filename,
+            "text_length": len(extracted_text),
+            "extracted_text": extracted_text[:1000] + "..." if len(extracted_text) > 1000 else extracted_text
+        }
+        
+        # If a question was provided, ask the LLM
+        if question:
+            logger.info(f"Analyzing PDF with question: {question}")
+            # Get Groq API key from environment
+            GROQ_API_KEY ="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"
+            if not GROQ_API_KEY:
+                return jsonify({"error": "GROQ_API_KEY not configured"}), 500
             
-            # Check if we got valid results from Pinecone
-            if query_result and isinstance(query_result, list) and len(query_result) > 0:
-                logger.info("Successfully fetched interest rates from Pinecone")
-                return jsonify(query_result)
-            else:
-                logger.warning("No valid data from Pinecone for interest rates, using fallback data")
-        except Exception as e:
-            logger.error(f"Error querying Pinecone for interest rates: {str(e)}")
+            answer = ask_llm_about_pdf(extracted_text, question, GROQ_API_KEY)
+            result["question"] = question
+            result["answer"] = answer
         
-        # If Pinecone query fails, check MongoDB
-        if mongo.db:
-            interest_rates = list(mongo.db.interest_rates.find({}, {'_id': 0}))
-            if interest_rates:
-                logger.info("Using interest rates from MongoDB")
-                return jsonify(interest_rates)
+        # Translate if target language is not English
+        if target_lang != "en-IN":
+            logger.info(f"Translating content to {target_lang}")
+            if "answer" in result:
+                # Translate the answer
+                translated_answer = translate_text_chunked(
+                    result["answer"],
+                    source_language="en-IN",
+                    target_language=target_lang,
+                    sarvam_api_key=SARVAM_API_KEY
+                )
+                result["translated_answer"] = translated_answer
+            
+            # Translate the extracted text (limit to first 3000 chars to avoid long processing)
+            text_to_translate = extracted_text[:3000] + "..." if len(extracted_text) > 3000 else extracted_text
+            translated_text = translate_text_chunked(
+                text_to_translate,
+                source_language="en-IN",
+                target_language=target_lang,
+                sarvam_api_key=SARVAM_API_KEY
+            )
+            result["translated_text"] = translated_text
         
-        # Fallback to sample data if all else fails
-        logger.info("Using fallback interest rate data")
-        rates = [
-            {"loan_type": "Home Loan", "min_rate": 6.7, "max_rate": 8.9},
-            {"loan_type": "Personal Loan", "min_rate": 10.8, "max_rate": 18.5},
-            {"loan_type": "Car Loan", "min_rate": 8.0, "max_rate": 12.0},
-            {"loan_type": "Education Loan", "min_rate": 7.0, "max_rate": 15.0}
-        ]
-        return jsonify(rates)
+        # Clean up temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        return jsonify(result)
+        
     except Exception as e:
-        logger.error(f"Error fetching interest rates: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error parsing and analyzing PDF: {str(e)}")
+        # Clean up temporary file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

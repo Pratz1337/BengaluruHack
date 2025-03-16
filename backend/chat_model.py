@@ -9,11 +9,13 @@ from langchain_core.tools import tool
 from document_processor import DocumentProcessor
 from vector_search import PineconeRAGPipeline
 from confidence import get_confidence_score
+from tool_indexing import ToolIndex
+import logging
 
 # Load environment variables securely
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "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"
 SARVAM_API_KEY = "b7e1c4f0-4c19-4d34-8d2f-6aea1990bdbf"  # Your Sarvam API key
-PINECONE_API_KEY = "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG"  # Replace with your key
+PINECONE_API_KEY = "pcsk_a3nGH_2C5f2D2Nd1uNb6GVSDSer3SaaJFXZZKzaHjxhmXHjwnx2SNm5ScYs8udYHfudoP"  # Replace with your key
 
 # Initialize Pinecone RAG Pipeline
 vector_search = PineconeRAGPipeline(
@@ -110,42 +112,19 @@ User Interest: {topic}
 Response Format:  
 {format_instructions}
 """)
+
 @tool("Financial Literacy Tips")
 def get_financial_tips(topic: str) -> dict:
     """Provide financial literacy tips, such as saving strategies or credit score improvement."""
-    
-    # Format the prompt with user input
     prompt_with_instructions = financial_tips_prompt.format(
         topic=topic,
         format_instructions=financial_tips_parser.get_format_instructions()
     )
-    
-    # Invoke the LLM with the formatted prompt
     response = llm.invoke(prompt_with_instructions)
-
-    # Debugging: Print the raw response
-    print("\n=== Raw LLM Response ===")
-    print(response.content)
-    print("=== End Raw Response ===\n")
-
     try:
-        # Attempt to parse the response into structured JSON
-        parsed_response = financial_tips_parser.parse(response.content)
-
-        # Debugging: Print the parsed output
-        print("\n=== Parsed Response ===")
-        print(parsed_response)
-        print("=== End Parsed Response ===\n")
-
-        return parsed_response
-
+        return financial_tips_parser.parse(response.content)
     except Exception as e:
-        # Debugging: Print error details if parsing fails
-        print("\n!!! Parsing Error:", str(e))
-        print("Response Content:", response.content)
-        print("!!!\n")
-
-        return {"error": f"Parsing Error: {str(e)}"}
+        return {"error": str(e)}
 
 financial_goal_schema = [
     ResponseSchema(name="goal", description="The financial goal set by the user"),
@@ -515,19 +494,118 @@ def execute_tool_call(tool_name, tool_params):
         print(f"Unknown tool: {tool_name}")
         return {"error": f"Unknown tool: {tool_name}"}
 
+# Initialize the tool index
+tool_index = ToolIndex()
+
+# Register your tools with detailed descriptions and intent patterns
+tool_index.add_tool(
+    "Loan Eligibility Check", 
+    check_loan_eligibility,
+    "Determine loan eligibility based on financial details, credit score, and income requirements",
+    [
+        "am I eligible for a loan",
+        "loan eligibility",
+        "qualify for loan",
+        "can I get a loan",
+        "loan requirements",
+        "loan criteria",
+        "approval chances",
+        "credit score needed"
+    ]
+)
+
+tool_index.add_tool(
+    "Loan Application Guidance", 
+    guide_loan_application,
+    "Guide through loan application process, including documentation requirements and application steps",
+    [
+        "how to apply for loan", 
+        "loan application process",
+        "documents needed for loan",
+        "loan application steps",
+        "loan paperwork",
+        "filling loan form",
+        "loan documentation",
+        "loan application requirements"
+    ]
+)
+
+tool_index.add_tool(
+    "Financial Literacy Tips", 
+    get_financial_tips,
+    "Provide financial literacy tips on saving, credit improvement, and managing finances",
+    [
+        "financial advice",
+        "money saving tips",
+        "improve credit score",
+        "financial literacy",
+        "budget tips",
+        "investment advice",
+        "manage money better",
+        "financial planning",
+        "debt management"
+    ]
+)
+
+tool_index.add_tool(
+    "Financial Goal Tracking", 
+    track_financial_goal,
+    "Help track financial goals, monitor progress, and provide advice on achieving objectives",
+    [
+        "track financial goal",
+        "saving for a goal",
+        "financial milestone",
+        "goal progress",
+        "saving target",
+        "money goal",
+        "financial planning",
+        "track savings progress"
+    ]
+)
+
+# Build the index
+tool_index.build_index()
+
+# Update the ChatModel function to use intent detection
 def ChatModel(msg, document_context):
     """
     Processes the user query and provides loan-related information while maintaining chat history.
-    Uses dynamic tool calling and generic tool result integration.
+    Uses dynamic tool calling with intent detection and generic tool result integration.
     Includes a confidence score for the response.
     """
+    # First, try to detect intent from the user's message
+    detected_tool, score = tool_index.match_intent(msg)
+    
+    # Get the standard LLM response
     result = extract_loan_info(msg, document_context)
     extracted_info = result["extracted_info"]
     combined_context = result["context"]
     
-    # Check if we need to make a tool call
+    # Check for explicit tool call from LLM
     tool_call_needed = extracted_info.get("tool_call", "")
     tool_parameters = extracted_info.get("tool_parameters", {})
+    
+    # If LLM didn't specify a tool but we detected an intent with confidence, use that tool
+    if (not tool_call_needed or not tool_call_needed.strip()) and detected_tool and score > 0.35:
+        print(f"Using intent detection: {detected_tool} (score: {score:.4f})")
+        tool_call_needed = detected_tool
+        
+        # For simple tool invocations, create reasonable parameters
+        if detected_tool == "Financial Literacy Tips":
+            tool_parameters = {"topic": msg}
+        elif detected_tool == "Loan Application Guidance":
+            # Try to extract loan type from context
+            loan_type = extracted_info.get("loan_type", "")
+            if not loan_type:
+                # Extract potential loan types from the message
+                loan_keywords = ["home", "car", "personal", "education", "business", "mortgage"]
+                for keyword in loan_keywords:
+                    if keyword in msg.lower():
+                        loan_type = f"{keyword} loan"
+                        break
+                if not loan_type:
+                    loan_type = "general"
+            tool_parameters = {"loan_type": loan_type}
     
     tool_result = {}
     if tool_call_needed and tool_call_needed.strip():
@@ -562,6 +640,9 @@ def ChatModel(msg, document_context):
     
     # Save to memory
     memory.save_context({"input": msg}, {"output": extracted_info["result"]})
+    
+    # Format the final response (rest of function unchanged)
+    # ...existing formatting code...
     
     # Format the final response
     formatted_response = ""

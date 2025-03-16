@@ -51,7 +51,7 @@ class PineconeRAGPipeline:
     def _initialize_assistant(self):
         """Create or get the Pinecone assistant"""
         try:
-            # Check if assistant exists
+            # Check if  exists
             assistants = self.pc.assistant.list_assistants()
             assistant_exists = False
             
