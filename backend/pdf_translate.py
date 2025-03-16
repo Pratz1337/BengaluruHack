@@ -3,7 +3,7 @@ import base64
 import os
 from pathlib import Path
 
-def translate_pdf(input_pdf_path, output_language="hi-IN", page_number=None, 
+def translate_pdf69(input_pdf_path, output_language="hi-IN", page_number=None, 
                   input_language="en-IN", hard_translate_dict=None, 
                   api_key="your_api_key_here"):
     """
@@ -114,7 +114,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    translate_pdf(
+    translate_pdf69(
         args.input_pdf,
         output_language=args.output_lang,
         page_number=args.page,

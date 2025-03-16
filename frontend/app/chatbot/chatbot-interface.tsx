@@ -47,6 +47,17 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { TypingIndicator } from "@/components/typing-indicator"
 import { useAuth } from "@/components/auth/auth-provider"
+import {
+  fetchInterestRates,
+  fetchRecentQueries,
+  fetchFinancialTips,
+  fetchLoanCategories,
+  fetchFinancialTools,
+  type InterestRate,
+  type RecentQuery,
+} from "@/services/api-service"
+import { saveChatToHistory } from "@/services/chat-history-service"
+import router from "next/router"
 
 // Environment variable with fallback
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
@@ -124,11 +135,11 @@ export default function ChatbotInterface() {
     repayment_options: "",
     additional_info: "",
   })
-  const [interestRates, setInterestRates] = useState<any[]>([])
-  const [recentQueries, setRecentQueries] = useState<
-    { id: string; query: string; loan_type: string; hours_ago: number }[]
-  >([])
+  const [interestRates, setInterestRates] = useState<InterestRate[]>([])
+  const [recentQueries, setRecentQueries] = useState<RecentQuery[]>([])
   const [financialTips, setFinancialTips] = useState<string[]>([])
+  const [loanCategories, setLoanCategories] = useState<any[]>([])
+  const [financialTools, setFinancialTools] = useState<any[]>([])
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isFetchingData, setIsFetchingData] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -138,6 +149,7 @@ export default function ChatbotInterface() {
   const [debugLogs, setDebugLogs] = useState<string[]>([])
   const [isInConversation, setIsInConversation] = useState(false)
   const [isVoiceServerAvailable, setIsVoiceServerAvailable] = useState(false)
+  const [dataRefreshInterval, setDataRefreshInterval] = useState<NodeJS.Timeout | null>(null)
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -220,9 +232,24 @@ export default function ChatbotInterface() {
     // Fetch sidebar data
     fetchSidebarData()
 
+    // Set up interval to refresh data every 5 minutes
+    const interval = setInterval(
+      () => {
+        fetchSidebarData()
+      },
+      5 * 60 * 1000,
+    )
+
+    setDataRefreshInterval(interval)
+
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect()
+      }
+
+      // Clear the refresh interval
+      if (dataRefreshInterval) {
+        clearInterval(dataRefreshInterval)
       }
     }
   }, [])
@@ -308,37 +335,51 @@ export default function ChatbotInterface() {
       }
       setLoanInfo(newLoanInfo)
     }
+
+    if (data.info?.loan_type) {
+      // Refresh history when loan type is determined
+      fetchSidebarData()
+    }
   }
 
   // Fetch sidebar data
   const fetchSidebarData = async () => {
     setIsFetchingData(true)
     try {
-      // Fetch interest rates
-      const ratesResponse = await fetch(`${API_URL}/interest-rates`)
-      if (ratesResponse.ok) {
-        const ratesData = await ratesResponse.json()
-        setInterestRates(ratesData)
-      }
+      // Fetch interest rates from the real API
+      const ratesData = await fetchInterestRates()
+      setInterestRates(ratesData)
 
-      // Fetch recent queries
-      const queriesResponse = await fetch(`${API_URL}/recent-queries`)
-      if (queriesResponse.ok) {
-        const queriesData = await queriesResponse.json()
-        setRecentQueries(queriesData)
-      }
+      // Fetch recent queries from the real API
+      const queriesData = await fetchRecentQueries()
+      setRecentQueries(queriesData)
 
-      // Fetch financial tips
-      const tipsResponse = await fetch(`${API_URL}/financial-tips`)
-      if (tipsResponse.ok) {
-        const tipsData = await tipsResponse.json()
-        setFinancialTips(tipsData)
-      }
+      // Fetch financial tips from the real API
+      const tipsData = await fetchFinancialTips()
+      setFinancialTips(tipsData)
+
+      // Fetch loan categories from the real API
+      const categoriesData = await fetchLoanCategories()
+      setLoanCategories(categoriesData)
+
+      // Fetch financial tools from the real API
+      const toolsData = await fetchFinancialTools()
+      setFinancialTools(toolsData)
+
+      console.log("Successfully fetched all sidebar data")
     } catch (error) {
       console.error("Error fetching sidebar data:", error)
+      toast.error("Failed to fetch some financial data")
     } finally {
       setIsFetchingData(false)
     }
+  }
+
+  // Manual refresh of sidebar data
+  const handleRefreshData = async () => {
+    toast.info("Refreshing financial data...")
+    await fetchSidebarData()
+    toast.success("Financial data refreshed")
   }
 
   // Scroll to bottom of messages container
@@ -347,7 +388,7 @@ export default function ChatbotInterface() {
   }
 
   // Send message to server
-  const sendMessage = (message: string) => {
+  const sendMessage = async (message: string) => {
     if (!message.trim()) return
 
     if (!socketRef.current || !isConnected) {
@@ -374,9 +415,21 @@ export default function ChatbotInterface() {
       id: sessionId,
       language: autoDetectLanguage ? "auto" : language,
       auto_detect: autoDetectLanguage,
-      user_id: user?.uid || null,
-      user_name: user?.displayName || null,
+      user_id: user?.uid || 'anonymous',
+      user_name: user?.displayName || 'anonymous',
     })
+
+    // Save message to chat history
+    await saveChatToHistory(
+      socketRef.current,
+      message,
+      loanInfo.loan_type || "General",
+      new Date().toISOString(),
+      user?.uid || 'anonymous'
+    )
+
+    // Refresh the history immediately
+    fetchSidebarData()
   }
 
   // Handle file upload
@@ -677,8 +730,8 @@ export default function ChatbotInterface() {
             language: autoDetectLanguage ? "auto" : language,
             auto_detect: autoDetectLanguage,
             id: sessionId,
-            user_id: user?.uid || null,
-            user_name: user?.displayName || null,
+            user_id: user?.uid || 'anonymous',
+            user_name: user?.displayName || 'anonymous',
           })
 
           // Reset for next recording
@@ -744,6 +797,25 @@ export default function ChatbotInterface() {
       // Auth guard will redirect to landing page
     } catch (error) {
       toast.error("Error signing out")
+    }
+  }
+
+  const getTimeAgo = (date: Date) => {
+    const now = new Date()
+    const diff = now.getTime() - date.getTime()
+    const seconds = Math.floor(diff / 1000)
+    const minutes = Math.floor(seconds / 60)
+    const hours = Math.floor(minutes / 60)
+    const days = Math.floor(hours / 24)
+
+    if (days > 0) {
+      return `${days} day${days > 1 ? "s" : ""} ago`
+    } else if (hours > 0) {
+      return `${hours} hour${hours > 1 ? "s" : ""} ago`
+    } else if (minutes > 0) {
+      return `${minutes} minute${minutes > 1 ? "s" : ""} ago`
+    } else {
+      return "Just now"
     }
   }
 
@@ -987,6 +1059,10 @@ export default function ChatbotInterface() {
                               <>
                                 <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
                                 <p>Interest rate data unavailable</p>
+                                <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                  <RefreshCw className="mr-2 h-4 w-4" />
+                                  Refresh Data
+                                </Button>
                               </>
                             )}
                           </div>
@@ -1020,6 +1096,10 @@ export default function ChatbotInterface() {
                               <>
                                 <Lightbulb className="mx-auto h-12 w-12 opacity-20 mb-2" />
                                 <p>No financial tips available</p>
+                                <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                  <RefreshCw className="mr-2 h-4 w-4" />
+                                  Refresh Data
+                                </Button>
                               </>
                             )}
                           </div>
@@ -1042,7 +1122,10 @@ export default function ChatbotInterface() {
                     <Button onClick={downloadSummary} className="w-full" variant="outline">
                       <Download className="mr-2 h-4 w-4" /> Download Summary
                     </Button>
-
+                    <Button variant="outline" onClick={() => router.push("/pdf-translator")} className="flex items-center">
+                        <FileText className="h-4 w-4 mr-2" />
+                        PDF Translator
+                    </Button>
                     <Button onClick={handleSignOut} className="w-full" variant="outline">
                       <LogOut className="mr-2 h-4 w-4" /> Sign Out
                     </Button>
@@ -1184,10 +1267,21 @@ export default function ChatbotInterface() {
         <div className="hidden md:block w-80 lg:w-96 border-l overflow-y-auto">
           <div className="h-full flex flex-col">
             <div className="p-4 border-b">
-              <h2 className="text-lg font-semibold flex items-center">
-                <Sparkles className="mr-2 h-5 w-5 text-indigo-600" />
-                Financial Dashboard
-              </h2>
+              <div className="flex justify-between items-center">
+                <h2 className="text-lg font-semibold flex items-center">
+                  <Sparkles className="mr-2 h-5 w-5 text-indigo-600" />
+                  Financial Dashboard
+                </h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRefreshData}
+                  title="Refresh data"
+                  disabled={isFetchingData}
+                >
+                  <RefreshCw className={`h-4 w-4 ${isFetchingData ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
             </div>
 
             <Tabs defaultValue="info" className="flex-1">
@@ -1299,6 +1393,10 @@ export default function ChatbotInterface() {
                         <>
                           <Calculator className="mx-auto h-12 w-12 opacity-20 mb-2" />
                           <p>Interest rate data unavailable</p>
+                          <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Refresh Data
+                          </Button>
                         </>
                       )}
                     </div>
@@ -1329,7 +1427,7 @@ export default function ChatbotInterface() {
                                     {query.loan_type}
                                   </Badge>
                                   <span className="text-xs text-muted-foreground">
-                                    {query.hours_ago < 1 ? "Just now" : `${Math.floor(query.hours_ago)}h ago`}
+                                    {getTimeAgo(new Date(query.timestamp))}
                                   </span>
                                 </div>
                               </div>
@@ -1378,6 +1476,10 @@ export default function ChatbotInterface() {
                           ) : (
                             <>
                               <p className="text-sm">No tips available</p>
+                              <Button variant="outline" size="sm" onClick={handleRefreshData} className="mt-2">
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                                Refresh Data
+                              </Button>
                             </>
                           )}
                         </div>

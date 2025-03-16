@@ -110,19 +110,42 @@ User Interest: {topic}
 Response Format:  
 {format_instructions}
 """)
-
 @tool("Financial Literacy Tips")
 def get_financial_tips(topic: str) -> dict:
     """Provide financial literacy tips, such as saving strategies or credit score improvement."""
+    
+    # Format the prompt with user input
     prompt_with_instructions = financial_tips_prompt.format(
         topic=topic,
         format_instructions=financial_tips_parser.get_format_instructions()
     )
+    
+    # Invoke the LLM with the formatted prompt
     response = llm.invoke(prompt_with_instructions)
+
+    # Debugging: Print the raw response
+    print("\n=== Raw LLM Response ===")
+    print(response.content)
+    print("=== End Raw Response ===\n")
+
     try:
-        return financial_tips_parser.parse(response.content)
+        # Attempt to parse the response into structured JSON
+        parsed_response = financial_tips_parser.parse(response.content)
+
+        # Debugging: Print the parsed output
+        print("\n=== Parsed Response ===")
+        print(parsed_response)
+        print("=== End Parsed Response ===\n")
+
+        return parsed_response
+
     except Exception as e:
-        return {"error": str(e)}
+        # Debugging: Print error details if parsing fails
+        print("\n!!! Parsing Error:", str(e))
+        print("Response Content:", response.content)
+        print("!!!\n")
+
+        return {"error": f"Parsing Error: {str(e)}"}
 
 financial_goal_schema = [
     ResponseSchema(name="goal", description="The financial goal set by the user"),
@@ -188,11 +211,14 @@ loan_prompt = ChatPromptTemplate.from_template("""
 You are a Loan Advisor AI named "FinMate". Your job is to assist users with loan-related queries.
   
     *Guidelines:*
-    - Answer *only* questions related to *loans, interest rates, eligibility, repayment plans, and financial advice*.
+    - Answer *only* questions related to *loans, interest rates, eligibility,"Financial Literacy Tips", repayment plans, and financial advice*.
     - Do *NOT* discuss non-loan-related topics.
     - Always provide *concise, structured, and accurate* financial guidance.
     - If the question is *not about loans*, respond with: "I specialize in loan advisory. How can I assist with your loan needs?"
     - Always provide your response in *structured JSON format*.
+     If the query is about *loans*, provide direct answers using available tools.
+- If the query is about *financial literacy*, use the "Financial Literacy Tips" tool.
+- If uncertain, ask clarifying questions instead of rejecting the request.
 
 *Chat History:*  
 {chat_history}
@@ -237,11 +263,15 @@ You are strictly programmed to answer queries related to financial and loan-rela
     - Step-up repayment plans
     - Bullet payments
     - Loan restructuring options
-- **Financial Literacy**:
+- **Financial Literacy TIPS**:
     - Credit score improvement tips
     - Budgeting strategies
     - Debt management
     - Financial planning
+    - If the user asks about *saving strategies, credit scores, investment advice, or general money management*, call:
+  - "tool_call": "Financial Literacy Tips"
+  - "tool_parameters": "topic": "user's query" 
+                                         
 
 ---
 

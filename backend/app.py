@@ -8,16 +8,23 @@ import base64
 from datetime import datetime
 from typing import Optional, Dict, List
 from flask import Flask, request, jsonify
+from flask_pymongo import PyMongo
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from fpdf import FPDF
-from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 import numpy as np
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+from chat_history import chat_history_bp
+
+def init_app(app):
+    mongo.init_app(app)
+mongo = PyMongo()
+from pdf_translate import translate_pdf69
+
 
 # Import our modules
 from document_processor import DocumentProcessor
@@ -250,7 +257,7 @@ def generate_audio(text: str, language: str) -> Optional[str]:
             response.raise_for_status()
             result = response.json()
             audio_chunk = result.get("audios", [None])[0]
-            if audio_chunk:
+            if (audio_chunk):
                 audio_base64_chunks.append(audio_chunk)
         except Exception as e:
             logger.error(f"TTS Error for chunk: {str(e)}")
@@ -394,7 +401,26 @@ def upload_document():
                 os.remove(temp_path)
             except:
                 pass
+app.register_blueprint(chat_history_bp)
 
+@socketio.on('save_chat_history')
+def handle_save_chat(data):
+    try:
+        # Save chat to MongoDB
+        chat_entry = {
+            'query': data['query'],
+            'loan_type': data.get('loan_type', 'General'),
+            'timestamp': datetime.fromisoformat(data['timestamp']) if data.get('timestamp') else datetime.utcnow(),
+            'user_id': data.get('user_id')
+        }
+        
+        mongo.db.loan_queries.insert_one(chat_entry)
+        
+        # Broadcast update to all connected clients
+        emit('chat_history_updated', broadcast=True)
+        
+    except Exception as e:
+        print(f"Error saving chat history: {str(e)}")
 # Text message handler (use existing code)
 @socketio.on('send_message')
 def handle_send_message(msg):
@@ -568,14 +594,49 @@ def check_voice_support():
 @app.route('/interest-rates', methods=['GET'])
 def get_interest_rates():
     try:
-        # Sample data - replace with your actual data source
+        # Initialize Pinecone with API key
+        pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG")
+        vector_search = PineconeRAGPipeline(
+            pinecone_api_key=pinecone_api_key,
+            assistant_name="finmate-assistant"
+        )
+        
+        try:
+            # Query Pinecone for current interest rates
+            query_result = vector_search.query_assistant("current loan interest rates", verbose=False)
+            
+            # Check if we got valid results from Pinecone
+            if query_result and isinstance(query_result, list) and len(query_result) > 0:
+                logger.info("Successfully fetched interest rates from Pinecone")
+                return jsonify(query_result)
+            else:
+                logger.warning("No valid data from Pinecone for interest rates, using fallback data")
+        except Exception as e:
+            logger.error(f"Error querying Pinecone for interest rates: {str(e)}")
+        
+        # If Pinecone query fails, check MongoDB
+        if mongo.db:
+            interest_rates = list(mongo.db.interest_rates.find({}, {'_id': 0}))
+            if interest_rates:
+                logger.info("Using interest rates from MongoDB")
+                return jsonify(interest_rates)
+        
+        # Fallback to sample data if all else fails
+        logger.info("Using fallback interest rate data")
         rates = [
-            {"loan_type": "Home Loan", "min_rate": 6.5, "max_rate": 8.5},
-            {"loan_type": "Personal Loan", "min_rate": 10.5, "max_rate": 18.0},
-            {"loan_type": "Car Loan", "min_rate": 8.0, "max_rate": 12.0},
-            {"loan_type": "Education Loan", "min_rate": 7.0, "max_rate": 15.0}
+            {"loan_type": "SBI Personal Loan", "min_rate": 9.60, "max_rate": 9.60, "max_loan_amount": 1500000,
+             "eligibility": "Salaried and self-employed individuals with a good credit score"},
+            {"loan_type": "HDFC Personal Loan", "min_rate": 10.25, "max_rate": 10.25, "max_loan_amount": 4000000,
+             "eligibility": "Salaried individuals with a stable income and good credit history"},
+            {"loan_type": "ICICI Personal Loan", "min_rate": 10.50, "max_rate": 10.50, "max_loan_amount": 2000000,
+             "eligibility": "Salaried professionals and self-employed individuals with a proven track record"},
+            {"loan_type": "Axis Personal Loan", "min_rate": 10.75, "max_rate": 10.75, "max_loan_amount": 2500000,
+             "eligibility": "Employed individuals with a minimum monthly income and a satisfactory credit score"},
+            {"loan_type": "Kotak Personal Loan", "min_rate": 10.99, "max_rate": 10.99, "max_loan_amount": 3000000,
+             "eligibility": "Salaried and self-employed individuals with a steady income and a clean credit history"}
         ]
         return jsonify(rates)
+        
     except Exception as e:
         logger.error(f"Error fetching interest rates: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -635,28 +696,79 @@ def translate_document():
 
     file = request.files["file"]
     target_lang = request.form.get("target_lang", "hi-IN")
-    page_number = request.form.get("page_number", "1")
+    page_number = request.form.get("page_number", None)
 
     if file.filename == "":
         return jsonify({"error": "No file selected"}), 400
-
     try:
-        file_content = file.read()
-        result = document_processor.translate_pdf(
-            file_content=file_content,
-            filename=file.filename,
-            target_lang=target_lang,
+        # Create a temporary file to save the uploaded content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            file.save(temp_file.name)
+            temp_path = temp_file.name
+        
+        # Call the translate_pdf69 function with the correct parameters
+        result = translate_pdf69(
+            input_pdf_path=temp_path,
+            output_language=target_lang,
             page_number=page_number,
+            input_language=request.form.get("input_lang", "en-IN"),
+            api_key=SARVAM_API_KEY
         )
-
-        if result["success"]:
-            return jsonify({"success": True, "translated_pdf": result["translated_pdf"].decode("latin1")})
+        
+        # Read the translated PDF and encode it
+        if os.path.exists(result):
+            with open(result, "rb") as f:
+                translated_pdf_content = base64.b64encode(f.read()).decode("utf-8")
+            
+            # Clean up temporary files
+            os.remove(temp_path)
+            os.remove(result)
+            
+            return jsonify({"success": True, "translated_pdf": translated_pdf_content})
         else:
-            return jsonify({"success": False, "error": result["error"]}), 400
+            return jsonify({"success": False, "error": "Translation failed - no output file"}), 400
 
     except Exception as e:
+        logger.error(f"Error translating document: {str(e)}")
+        # Clean up temporary file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route('/save-chat', methods=['POST'])
+def save_chat():
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Log the received data for debugging
+        logger.info(f"Received data: {data}")
+
+        # Validate required fields
+        required_fields = ["user_id", "message", "loan_type", "timestamp"]
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"Missing field: {field}"}), 400
+
+        # Save chat to MongoDB
+        chat_entry = {
+            'query': data['message'],
+            'loan_type': data.get('loan_type', 'General'),
+            'timestamp': datetime.fromisoformat(data['timestamp']) if data.get('timestamp') else datetime.utcnow(),
+            'user_id': data.get('user_id')
+        }
+
+        mongo.db.loan_queries.insert_one(chat_entry)
+
+        # Broadcast update to all connected clients
+        socketio.emit('chat_history_updated', broadcast=True)
+
+        return jsonify({"success": True, "message": "Chat saved successfully"}), 200
+
+    except Exception as e:
+        logger.error(f"Error saving chat: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 # CORS headers for all responses
@@ -667,5 +779,106 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
     return response
 
+# Add these routes for financial dashboard sidebar data
+
+from vector_search import PineconeRAGPipeline
+import random
+
+# Loan Categories Route
+@app.route('/api/loan-categories', methods=['GET'])
+def get_loan_categories():
+    """Get available loan categories for the sidebar."""
+    try:
+        # Fetch categories from database if available
+        if mongo.db:
+            loan_categories = list(mongo.db.loan_categories.find({}, {'_id': 0}))
+            if loan_categories:
+                return jsonify(loan_categories)
+        
+        # Default categories if not found in database
+        categories = [
+            {"id": "home_loans", "name": "Home Loans", "icon": "home"},
+            {"id": "personal_loans", "name": "Personal Loans", "icon": "person"},
+            {"id": "business_loans", "name": "Business Loans", "icon": "business"},
+            {"id": "education_loans", "name": "Education Loans", "icon": "school"},
+            {"id": "car_loans", "name": "Car Loans", "icon": "directions_car"},
+            {"id": "gold_loans", "name": "Gold Loans", "icon": "monetization_on"},
+            {"id": "mortgage_loans", "name": "Mortgage Loans", "icon": "account_balance"},
+            {"id": "credit_card_loans", "name": "Credit Card Loans", "icon": "credit_card"},
+        ]
+        return jsonify(categories)
+    except Exception as e:
+        logger.error(f"Error fetching loan categories: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# Financial Tools Route
+@app.route('/api/financial-tools', methods=['GET'])
+def get_financial_tools():
+    """Get available financial tools for the sidebar."""
+    try:
+        # Fetch tools from database if available
+        if mongo.db:
+            financial_tools = list(mongo.db.financial_tools.find({}, {'_id': 0}))
+            if financial_tools:
+                return jsonify(financial_tools)
+        
+        # Default tools if not found in database
+        tools = [
+            {"id": "emi_calculator", "name": "EMI Calculator", "icon": "calculate"},
+            {"id": "eligibility_checker", "name": "Loan Eligibility Checker", "icon": "check_circle"},
+            {"id": "interest_comparison", "name": "Interest Rate Comparison", "icon": "compare_arrows"},
+            {"id": "credit_score", "name": "Credit Score Analysis", "icon": "analytics"},
+            {"id": "debt_consolidation", "name": "Debt Consolidation Planner", "icon": "account_balance_wallet"}
+        ]
+        return jsonify(tools)
+    except Exception as e:
+        logger.error(f"Error fetching financial tools: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# Updated Interest rates endpoint to use real data from Pinecone
+@app.route('/api/interest-rates', methods=['GET'])
+def get_api_interest_rates():
+    try:
+        # Initialize Pinecone with your API key
+        pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_4ZTpUw_8CKa5K97wAoVWq5R9kwuZoHCBL9eiffDu4jXjay2M2ZHLXuoJT1hhHcYEmecRfG")
+        vector_search = PineconeRAGPipeline(
+            pinecone_api_key=pinecone_api_key,
+            assistant_name="finmate-assistant"
+        )
+        
+        try:
+            # Query Pinecone for current interest rates
+            query_result = vector_search.query_assistant("current loan interest rates", verbose=False)
+            
+            # Check if we got valid results from Pinecone
+            if query_result and isinstance(query_result, list) and len(query_result) > 0:
+                logger.info("Successfully fetched interest rates from Pinecone")
+                return jsonify(query_result)
+            else:
+                logger.warning("No valid data from Pinecone for interest rates, using fallback data")
+        except Exception as e:
+            logger.error(f"Error querying Pinecone for interest rates: {str(e)}")
+        
+        # If Pinecone query fails, check MongoDB
+        if mongo.db:
+            interest_rates = list(mongo.db.interest_rates.find({}, {'_id': 0}))
+            if interest_rates:
+                logger.info("Using interest rates from MongoDB")
+                return jsonify(interest_rates)
+        
+        # Fallback to sample data if all else fails
+        logger.info("Using fallback interest rate data")
+        rates = [
+            {"loan_type": "Home Loan", "min_rate": 6.7, "max_rate": 8.9},
+            {"loan_type": "Personal Loan", "min_rate": 10.8, "max_rate": 18.5},
+            {"loan_type": "Car Loan", "min_rate": 8.0, "max_rate": 12.0},
+            {"loan_type": "Education Loan", "min_rate": 7.0, "max_rate": 15.0}
+        ]
+        return jsonify(rates)
+    except Exception as e:
+        logger.error(f"Error fetching interest rates: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+
