@@ -35,7 +35,7 @@ An AI-powered voice assistant project that utilizes natural language processing 
 ### Clone the repository
 
 ```bash
-git clone https://github.com/your-username/Tgbh.git
+git clone https://github.com/Pratz1337/BengaluruHack.git
 ```
 
 ### Install dependencies
